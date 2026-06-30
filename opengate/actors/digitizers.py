@@ -678,6 +678,122 @@ class DigitizerDeadTimeActor(DigitizerWithRootOutput, g4.GateDigitizerDeadTimeAc
         DigitizerBase.EndSimulationAction(self)
 
 
+class DigitizerOpticalGenerativeActor(
+    DigitizerWithRootOutput, g4.GateDigitizerOpticalGenerativeActor
+):
+    """
+    For every input digi (one energy-deposition step, e.g. from a
+    DigitizerHitsCollectionActor with no G4OpticalPhysics involved), calls a
+    pluggable Python generative model to synthesize N optical-photon-like
+    records (X, Y, dX, dY, dZ, Ekine, Time), instead of tracking optical
+    photons with Geant4. This lets a model such as OptiGAN (or any other
+    model implementing the same 'generate' interface) bridge the optical
+    response live, inside a standard system simulation.
+
+    The generator must be an object with a method:
+        generate(x, y, z, edep, time) -> iterable of
+            (X, Y, dX, dY, dZ, Ekine, LogTime) tuples
+    one tuple per synthesized optical photon (the number of tuples, N, is
+    decided by the generator itself and may vary call to call). LogTime is
+    converted to linear time by this actor before being written to the
+    output collection.
+
+    Input: a digi collection with at least TotalEnergyDeposit, PostPosition
+    and GlobalTime attributes (e.g. the output of a
+    DigitizerHitsCollectionActor, used directly, without an Adder in
+    between: each input row is treated as one energy-deposition point).
+    Output: a digi collection with X, Y, dX, dY, dZ, Ekine, Time and
+    SourceHitIndex (the index of the input row that produced each photon).
+    """
+
+    user_info_defaults = {
+        "input_digi_collection": (
+            "Hits",
+            {
+                "doc": "Digi collection to be used as input (one row per "
+                "energy-deposition step, e.g. the output of a "
+                "DigitizerHitsCollectionActor).",
+            },
+        ),
+        "generator": (
+            None,
+            {
+                "doc": "Object implementing generate(x, y, z, edep, time) -> "
+                "iterable of (X, Y, dX, dY, dZ, Ekine, LogTime) tuples. "
+                "One call is made per input digi.",
+            },
+        ),
+        "skip_attributes": (
+            [],
+            {
+                "doc": "Attributes to be omitted from the output.",
+            },
+        ),
+        "clear_every": (
+            1e5,
+            {
+                "doc": "The memory consumed by the actor is minimized after "
+                "having processed the specified amount of digis.",
+            },
+        ),
+    }
+
+    def __init__(self, *args, **kwargs):
+        DigitizerBase.__init__(self, *args, **kwargs)
+        self.__initcpp__()
+
+    def __initcpp__(self):
+        g4.GateDigitizerOpticalGenerativeActor.__init__(self, self.user_info)
+        self.AddActions({"StartSimulationAction", "EndSimulationAction"})
+
+    def initialize(self):
+        DigitizerBase.initialize(self)
+        self.InitializeUserInfo(self.user_info)
+        self.InitializeCpp()
+
+    def _call_generator(self, cpp_actor):
+        # cpp_actor is 'self' (passed explicitly by the C++ side, as a
+        # std::function<void(GateDigitizerOpticalGenerativeActor*)> call,
+        # the same convention as GANSourceDefaultGenerator.generator)
+        results = self.user_info.generator.generate(
+            cpp_actor.fInputX,
+            cpp_actor.fInputY,
+            cpp_actor.fInputZ,
+            cpp_actor.fInputEdep,
+            cpp_actor.fInputTime,
+        )
+        x, y, dx, dy, dz, ekine, log_time = [], [], [], [], [], [], []
+        for X, Y, dX, dY, dZ, Ekine, LogTime in results:
+            x.append(X)
+            y.append(Y)
+            dx.append(dX)
+            dy.append(dY)
+            dz.append(dZ)
+            ekine.append(Ekine)
+            log_time.append(LogTime)
+        cpp_actor.fOutputX = x
+        cpp_actor.fOutputY = y
+        cpp_actor.fOutputDX = dx
+        cpp_actor.fOutputDY = dy
+        cpp_actor.fOutputDZ = dz
+        cpp_actor.fOutputEkine = ekine
+        cpp_actor.fOutputLogTime = log_time
+
+    def StartSimulationAction(self):
+        DigitizerBase.StartSimulationAction(self)
+        if self.user_info.generator is None:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
+                f"'generator' object implementing "
+                f"generate(x, y, z, edep, time)."
+            )
+        self.SetGeneratorFunction(self._call_generator)
+        g4.GateDigitizerOpticalGenerativeActor.StartSimulationAction(self)
+
+    def EndSimulationAction(self):
+        g4.GateDigitizerOpticalGenerativeActor.EndSimulationAction(self)
+
+
 class DigitizerPileupActor(DigitizerWithRootOutput, g4.GateDigitizerPileupActor):
     """
     Dititizer module for simulating pile-up
@@ -1812,6 +1928,7 @@ process_cls(DigitizerWithRootOutput)
 process_cls(DigitizerAdderActor)
 process_cls(DigitizerBlurringActor)
 process_cls(DigitizerDeadTimeActor)
+process_cls(DigitizerOpticalGenerativeActor)
 process_cls(DigitizerPileupActor)
 process_cls(DigitizerSpatialBlurringActor)
 process_cls(DigitizerEfficiencyActor)
