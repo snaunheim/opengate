@@ -497,6 +497,8 @@ void init_GateHitsAdderActor(py::module &);
 
 void init_GateDigitizerDeadTimeActor(py::module &);
 
+void init_GateDigitizerOpticalGenerativeActor(py::module &);
+
 void init_GateDigitizerPileupActor(py::module &);
 
 void init_GateDigitizerReadoutActor(py::module &m);
@@ -840,6 +842,7 @@ PYBIND11_MODULE(opengate_core, m) {
   init_GateVDigiAttribute(m);
   init_GateHitsAdderActor(m);
   init_GateDigitizerDeadTimeActor(m);
+  init_GateDigitizerOpticalGenerativeActor(m);
   init_GateDigitizerPileupActor(m);
   init_GateDigitizerReadoutActor(m);
   init_GateDigitizerBlurringActor(m);
