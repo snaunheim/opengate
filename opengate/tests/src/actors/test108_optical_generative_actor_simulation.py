@@ -4,8 +4,6 @@
 import opengate as gate
 from test108_optical_generative_actor_helpers import FixedNMockGenerator
 
-N_PHOTONS_PER_HIT = 3
-
 
 def create_simulation(paths, generator=None):
     mm = gate.g4_units.mm
@@ -47,13 +45,13 @@ def create_simulation(paths, generator=None):
     hc.attached_to = crystal.name
     hc.output_filename = hits_filename
     hc.attributes = [
-        "PostPosition",
+        "PostPositionLocal",
         "TotalEnergyDeposit",
         "GlobalTime",
     ]
 
     if generator is None:
-        generator = FixedNMockGenerator(N_PHOTONS_PER_HIT)
+        generator = FixedNMockGenerator()
 
     og = sim.add_actor("DigitizerOpticalGenerativeActor", "SyntheticPhotons")
     og.attached_to = crystal.name
@@ -63,4 +61,4 @@ def create_simulation(paths, generator=None):
 
     sim.run_timing_intervals = [[0, 0.1 * sec]]
 
-    return sim, hits_filename, output_filename, N_PHOTONS_PER_HIT
+    return sim, hits_filename, output_filename
