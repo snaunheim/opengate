@@ -10,6 +10,7 @@
 #include "GateDigiCollectionManager.h"
 #include "GateHelpersDigitizer.h"
 #include "GateTDigiAttribute.h"
+#include <G4Poisson.hh>
 #include <cmath>
 
 GateDigitizerOpticalGenerativeActor::GateDigitizerOpticalGenerativeActor(
@@ -68,7 +69,7 @@ void GateDigitizerOpticalGenerativeActor::StartSimulationAction() {
 
   // check required attributes on the input (raw Hits) collection
   CheckRequiredAttribute(fInputDigiCollection, "TotalEnergyDeposit");
-  CheckRequiredAttribute(fInputDigiCollection, "PostPosition");
+  CheckRequiredAttribute(fInputDigiCollection, "PostPositionLocal");
   CheckRequiredAttribute(fInputDigiCollection, "GlobalTime");
 }
 
@@ -96,7 +97,7 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   lr.fInputIter = fInputDigiCollection->NewIterator();
   auto &l = fThreadLocalData.Get();
   lr.fInputIter.TrackAttribute("TotalEnergyDeposit", &l.edep);
-  lr.fInputIter.TrackAttribute("PostPosition", &l.pos);
+  lr.fInputIter.TrackAttribute("PostPositionLocal", &l.pos);
   lr.fInputIter.TrackAttribute("GlobalTime", &l.time);
 }
 
@@ -109,35 +110,31 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
 
   while (!iter.IsAtEnd()) {
     if (*l.edep > 0) {
-      // set the generator input for this hit
-      fInputX = l.pos->x();
-      fInputY = l.pos->y();
-      fInputZ = l.pos->z();
-      fInputEdep = *l.edep;
-      fInputTime = *l.time;
+      // sample N from Poisson(edep * scintillation_yield)
+      const long N =
+          G4Poisson((*l.edep) * fScintillationYield);
 
-      // clear previous outputs and call the Python generator;
-      // it fills fOutputX/Y/DX/DY/DZ/Ekine/LogTime in place
-      fOutputX.clear();
-      fOutputY.clear();
-      fOutputDX.clear();
-      fOutputDY.clear();
-      fOutputDZ.clear();
-      fOutputEkine.clear();
-      fOutputLogTime.clear();
-      fGenerator(this);
+      if (N > 0) {
+        // set position and time inputs (same for all N photons of this hit)
+        fInputX = l.pos->x();
+        fInputY = l.pos->y();
+        fInputZ = l.pos->z();
+        fInputTime = *l.time;
 
-      const auto sourceHitIndex = static_cast<double>(iter.fIndex);
-      for (size_t i = 0; i < fOutputX.size(); i++) {
-        fOutputXAttribute->FillDValue(fOutputX[i]);
-        fOutputYAttribute->FillDValue(fOutputY[i]);
-        fOutputDXAttribute->FillDValue(fOutputDX[i]);
-        fOutputDYAttribute->FillDValue(fOutputDY[i]);
-        fOutputDZAttribute->FillDValue(fOutputDZ[i]);
-        fOutputEkineAttribute->FillDValue(fOutputEkine[i]);
-        // LogTime from the model is converted to linear time before storage
-        fOutputTimeAttribute->FillDValue(std::exp(fOutputLogTime[i]));
-        fOutputSourceHitIndexAttribute->FillDValue(sourceHitIndex);
+        const auto sourceHitIndex = static_cast<double>(iter.fIndex);
+        for (long i = 0; i < N; ++i) {
+          // generator fills the scalar fOutput* fields for one photon
+          fGenerator(this);
+          fOutputXAttribute->FillDValue(fOutputX);
+          fOutputYAttribute->FillDValue(fOutputY);
+          fOutputDXAttribute->FillDValue(fOutputDX);
+          fOutputDYAttribute->FillDValue(fOutputDY);
+          fOutputDZAttribute->FillDValue(fOutputDZ);
+          fOutputEkineAttribute->FillDValue(fOutputEkine);
+          // LogTime from the model is converted to linear time before storage
+          fOutputTimeAttribute->FillDValue(std::exp(fOutputLogTime));
+          fOutputSourceHitIndexAttribute->FillDValue(sourceHitIndex);
+        }
       }
     }
     iter++;

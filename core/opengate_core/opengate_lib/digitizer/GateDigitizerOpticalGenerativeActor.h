@@ -16,9 +16,10 @@
 namespace py = pybind11;
 
 /*
- * For every input digi (one energy-deposition step), calls a Python
- * generative model to synthesize N optical-photon-like records
- * (X, Y, dX, dY, dZ, Ekine, LogTime), without running G4OpticalPhysics.
+ * For every input digi (one energy-deposition step), samples N from a Poisson
+ * distribution (N = Poisson(edep * scintillation_yield)) and calls a Python
+ * generative model N times to synthesize one optical-photon-like record per
+ * call (X, Y, dX, dY, dZ, Ekine, LogTime), without running G4OpticalPhysics.
  * This lets a model such as OptiGAN bridge the optical simulation live,
  * inside a standard system simulation.
  */
@@ -26,9 +27,8 @@ namespace py = pybind11;
 class GateDigitizerOpticalGenerativeActor : public GateVDigitizerWithOutputActor {
 
 public:
-  // signature of the callback function in Python that generates,
-  // for one input digi (position, energy, time), a batch of N synthetic
-  // optical photon records by filling fOutput* below
+  // signature of the callback: called once per synthetic photon;
+  // fills fOutputX/Y/DX/DY/DZ/Ekine/LogTime with a single photon record
   using GeneratorType =
       std::function<void(GateDigitizerOpticalGenerativeActor *)>;
 
@@ -44,19 +44,21 @@ public:
 
   void SetGeneratorFunction(GeneratorType &f);
 
+  // scintillation yield in photons/MeV; N ~ Poisson(edep * yield)
+  double fScintillationYield;
+
   // input to the generator (set before each call to fGenerator)
   double fInputX, fInputY, fInputZ;
-  double fInputEdep;
   double fInputTime;
 
-  // output from the generator (filled by Python, read back after each call)
-  std::vector<double> fOutputX;
-  std::vector<double> fOutputY;
-  std::vector<double> fOutputDX;
-  std::vector<double> fOutputDY;
-  std::vector<double> fOutputDZ;
-  std::vector<double> fOutputEkine;
-  std::vector<double> fOutputLogTime;
+  // output from the generator (filled by Python for ONE photon per call)
+  double fOutputX;
+  double fOutputY;
+  double fOutputDX;
+  double fOutputDY;
+  double fOutputDZ;
+  double fOutputEkine;
+  double fOutputLogTime;
 
 protected:
   void DigitInitialize(

@@ -24,26 +24,29 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
       .def("SetGeneratorFunction",
            &GateDigitizerOpticalGenerativeActor::SetGeneratorFunction)
 
+      .def_readwrite("fScintillationYield",
+                     &GateDigitizerOpticalGenerativeActor::fScintillationYield)
+
+      // position + time inputs (set by C++ before each generator call)
       .def_readwrite("fInputX", &GateDigitizerOpticalGenerativeActor::fInputX)
       .def_readwrite("fInputY", &GateDigitizerOpticalGenerativeActor::fInputY)
       .def_readwrite("fInputZ", &GateDigitizerOpticalGenerativeActor::fInputZ)
-      .def_readwrite("fInputEdep",
-                      &GateDigitizerOpticalGenerativeActor::fInputEdep)
       .def_readwrite("fInputTime",
-                      &GateDigitizerOpticalGenerativeActor::fInputTime)
+                     &GateDigitizerOpticalGenerativeActor::fInputTime)
 
+      // scalar outputs (filled by Python for ONE photon per call)
       .def_readwrite("fOutputX",
-                      &GateDigitizerOpticalGenerativeActor::fOutputX)
+                     &GateDigitizerOpticalGenerativeActor::fOutputX)
       .def_readwrite("fOutputY",
-                      &GateDigitizerOpticalGenerativeActor::fOutputY)
+                     &GateDigitizerOpticalGenerativeActor::fOutputY)
       .def_readwrite("fOutputDX",
-                      &GateDigitizerOpticalGenerativeActor::fOutputDX)
+                     &GateDigitizerOpticalGenerativeActor::fOutputDX)
       .def_readwrite("fOutputDY",
-                      &GateDigitizerOpticalGenerativeActor::fOutputDY)
+                     &GateDigitizerOpticalGenerativeActor::fOutputDY)
       .def_readwrite("fOutputDZ",
-                      &GateDigitizerOpticalGenerativeActor::fOutputDZ)
+                     &GateDigitizerOpticalGenerativeActor::fOutputDZ)
       .def_readwrite("fOutputEkine",
-                      &GateDigitizerOpticalGenerativeActor::fOutputEkine)
+                     &GateDigitizerOpticalGenerativeActor::fOutputEkine)
       .def_readwrite("fOutputLogTime",
-                      &GateDigitizerOpticalGenerativeActor::fOutputLogTime);
+                     &GateDigitizerOpticalGenerativeActor::fOutputLogTime);
 }
