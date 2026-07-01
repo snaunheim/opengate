@@ -27,14 +27,16 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
       .def_readwrite("fScintillationYield",
                      &GateDigitizerOpticalGenerativeActor::fScintillationYield)
 
-      // position + time inputs (set by C++ before each generator call)
+      // inputs set by C++ before each generator call
       .def_readwrite("fInputX", &GateDigitizerOpticalGenerativeActor::fInputX)
       .def_readwrite("fInputY", &GateDigitizerOpticalGenerativeActor::fInputY)
       .def_readwrite("fInputZ", &GateDigitizerOpticalGenerativeActor::fInputZ)
       .def_readwrite("fInputTime",
                      &GateDigitizerOpticalGenerativeActor::fInputTime)
+      .def_readwrite("fInputN",
+                     &GateDigitizerOpticalGenerativeActor::fInputN)
 
-      // scalar outputs (filled by Python for ONE photon per call)
+      // vector outputs filled by Python — one entry per photon, length fInputN
       .def_readwrite("fOutputX",
                      &GateDigitizerOpticalGenerativeActor::fOutputX)
       .def_readwrite("fOutputY",

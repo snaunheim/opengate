@@ -694,12 +694,10 @@ class DigitizerOpticalGenerativeActor(
     response live, inside a standard system simulation.
 
     The generator must be an object with a method:
-        generate(x, y, z, edep, time) -> iterable of
-            (X, Y, dX, dY, dZ, Ekine, Time) tuples
-    one tuple per synthesized optical photon (the number of tuples, N, is
-    decided by the generator itself and may vary call to call). Time is
-    converted to linear time by this actor before being written to the
-    output collection.
+        generate_batch(x, y, z, time, n_photons) -> tuple of 7 arrays
+            (X, Y, dX, dY, dZ, Ekine, Time), each of length n_photons
+    The method is called once per hit (not once per photon), so a GPU
+    model can process the full batch in a single forward pass.
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocal
     and GlobalTime attributes (e.g. the output of a
@@ -721,9 +719,9 @@ class DigitizerOpticalGenerativeActor(
         "generator": (
             None,
             {
-                "doc": "Object implementing generate(x, y, z, edep, time) -> "
-                "iterable of (X, Y, dX, dY, dZ, Ekine, Time) tuples. "
-                "One call is made per input digi.",
+                "doc": "Object implementing generate_batch(x, y, z, time, n_photons) "
+                "-> tuple of 7 arrays (X, Y, dX, dY, dZ, Ekine, Time) each of "
+                "length n_photons. Called once per hit for efficient GPU batching.",
             },
         ),
         "local_position_offset": (
@@ -787,24 +785,24 @@ class DigitizerOpticalGenerativeActor(
         self.InitializeCpp()
 
     def _call_generator(self, cpp_actor):
-        # called once per synthetic photon by the C++ loop;
-        # writes one photon record into the scalar fOutput* fields
+        # called once per hit by C++; writes N photon records as vectors
         coords = [cpp_actor.fInputX, cpp_actor.fInputY, cpp_actor.fInputZ]
         ax = self.user_info.local_axes_order
         off = self.user_info.local_position_offset
-        X, Y, dX, dY, dZ, Ekine, Time = self.user_info.generator.generate(
+        X, Y, dX, dY, dZ, Ekine, Time = self.user_info.generator.generate_batch(
             coords[ax[0]] + off[0],
             coords[ax[1]] + off[1],
             coords[ax[2]] + off[2],
             cpp_actor.fInputTime,
+            cpp_actor.fInputN,
         )
-        cpp_actor.fOutputX = X
-        cpp_actor.fOutputY = Y
-        cpp_actor.fOutputDX = dX
-        cpp_actor.fOutputDY = dY
-        cpp_actor.fOutputDZ = dZ
-        cpp_actor.fOutputEkine = Ekine
-        cpp_actor.fOutputTime = Time
+        cpp_actor.fOutputX = list(X)
+        cpp_actor.fOutputY = list(Y)
+        cpp_actor.fOutputDX = list(dX)
+        cpp_actor.fOutputDY = list(dY)
+        cpp_actor.fOutputDZ = list(dZ)
+        cpp_actor.fOutputEkine = list(Ekine)
+        cpp_actor.fOutputTime = list(Time)
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
@@ -812,7 +810,7 @@ class DigitizerOpticalGenerativeActor(
             fatal(
                 f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
                 f"'generator' object implementing "
-                f"generate(x, y, z, time)."
+                f"generate_batch(x, y, z, time, n_photons)."
             )
         # read scintillation yield from the optical properties XML for the
         # material of the attached volume

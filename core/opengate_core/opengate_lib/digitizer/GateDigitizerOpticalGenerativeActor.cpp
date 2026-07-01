@@ -120,23 +120,24 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
           G4Poisson((*l.edep) * fScintillationYield);
 
       if (N > 0) {
-        // set position and time inputs (same for all N photons of this hit)
+        // set inputs; generator is called once per hit with batch size N
         fInputX = l.pos->x();
         fInputY = l.pos->y();
         fInputZ = l.pos->z();
         fInputTime = *l.time;
+        fInputN = N;
+
+        fGenerator(this);  // fills fOutputX/Y/DX/DY/DZ/Ekine/Time as vectors
 
         const auto sourceHitIndex = static_cast<double>(iter.fIndex);
         for (long i = 0; i < N; ++i) {
-          // generator fills the scalar fOutput* fields for one photon
-          fGenerator(this);
-          fOutputXAttribute->FillDValue(fOutputX);
-          fOutputYAttribute->FillDValue(fOutputY);
-          fOutputDXAttribute->FillDValue(fOutputDX);
-          fOutputDYAttribute->FillDValue(fOutputDY);
-          fOutputDZAttribute->FillDValue(fOutputDZ);
-          fOutputEkineAttribute->FillDValue(fOutputEkine);
-          fOutputTimeAttribute->FillDValue(fOutputTime);
+          fOutputXAttribute->FillDValue(fOutputX[i]);
+          fOutputYAttribute->FillDValue(fOutputY[i]);
+          fOutputDXAttribute->FillDValue(fOutputDX[i]);
+          fOutputDYAttribute->FillDValue(fOutputDY[i]);
+          fOutputDZAttribute->FillDValue(fOutputDZ[i]);
+          fOutputEkineAttribute->FillDValue(fOutputEkine[i]);
+          fOutputTimeAttribute->FillDValue(fOutputTime[i]);
           fOutputSourceHitIndexAttribute->FillDValue(sourceHitIndex);
         }
       }

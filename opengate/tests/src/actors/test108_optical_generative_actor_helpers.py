@@ -8,24 +8,27 @@ class FixedNMockGenerator:
     """
     Deterministic mock generator for testing DigitizerOpticalGenerativeActor.
 
-    Called once per synthetic photon (N is determined by the actor via Poisson
-    sampling from edep * scintillation_yield). Returns a single photon record.
+    Called once per hit with the batch size n_photons determined by the actor
+    via Poisson sampling from edep * scintillation_yield. Returns n_photons
+    records as arrays — matching the interface a real GPU model would use.
 
-    generate(x, y, z, time) -> (X, Y, dX, dY, dZ, Ekine, Time)
+    generate_batch(x, y, z, time, n_photons)
+        -> (X, Y, dX, dY, dZ, Ekine, Time)  — each a numpy array of length n_photons
     """
 
     def __init__(self):
         self.call_count = 0
 
-    def generate(self, x, y, z, time):
+    def generate_batch(self, x, y, z, time, n_photons):
         self.call_count += 1
-        X = x
-        Y = y
-        dX = 0.0
-        dY = 0.0
-        dZ = 1.0
-        Ekine = 3.0  # eV, typical optical photon energy for BGO
-        return X, Y, dX, dY, dZ, Ekine, time
+        X = np.full(n_photons, x)
+        Y = np.full(n_photons, y)
+        dX = np.zeros(n_photons)
+        dY = np.zeros(n_photons)
+        dZ = np.ones(n_photons)
+        Ekine = np.full(n_photons, 3.0)  # eV, typical optical photon energy for BGO
+        Time = np.full(n_photons, time)
+        return X, Y, dX, dY, dZ, Ekine, Time
 
 
 def check_output(output_root_path, hits_root_path):
