@@ -65,6 +65,7 @@ protected:
       const std::vector<std::string> &attributes_not_in_filler) override;
 
   GeneratorType fGenerator;
+  std::string fPositionAttributeName;
 
   GateVDigiAttribute *fOutputXAttribute{};
   GateVDigiAttribute *fOutputYAttribute{};

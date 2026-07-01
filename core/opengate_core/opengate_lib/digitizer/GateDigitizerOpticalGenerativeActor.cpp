@@ -68,8 +68,14 @@ void GateDigitizerOpticalGenerativeActor::StartSimulationAction() {
 
   // check required attributes on the input (raw Hits) collection
   CheckRequiredAttribute(fInputDigiCollection, "TotalEnergyDeposit");
-  CheckRequiredAttribute(fInputDigiCollection, "PostPositionLocal");
   CheckRequiredAttribute(fInputDigiCollection, "GlobalTime");
+  // accept either crystal-local or module-local position
+  if (fInputDigiCollection->IsDigiAttributeExists("PostPositionLocalModule")) {
+    fPositionAttributeName = "PostPositionLocalModule";
+  } else {
+    CheckRequiredAttribute(fInputDigiCollection, "PostPositionLocal");
+    fPositionAttributeName = "PostPositionLocal";
+  }
 }
 
 void GateDigitizerOpticalGenerativeActor::DigitInitialize(
@@ -96,7 +102,7 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   lr.fInputIter = fInputDigiCollection->NewIterator();
   auto &l = fThreadLocalData.Get();
   lr.fInputIter.TrackAttribute("TotalEnergyDeposit", &l.edep);
-  lr.fInputIter.TrackAttribute("PostPositionLocal", &l.pos);
+  lr.fInputIter.TrackAttribute(fPositionAttributeName, &l.pos);
   lr.fInputIter.TrackAttribute("GlobalTime", &l.time);
 }
 
