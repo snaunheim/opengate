@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from test108_optical_generative_actor_helpers import FixedNMockGenerator
 
 
-
 def create_simulation(paths, generator=None):
     mm = gate.g4_units.mm
     MeV = gate.g4_units.MeV
@@ -36,19 +35,19 @@ def create_simulation(paths, generator=None):
     # Module arc width ≈ 10 mm (crystal depth in radial dir) → 20 modules fit comfortably.
     # ---------------------------------------------------------------------------
 
-    crystal_xy = 3 * mm      # transverse crystal size
-    crystal_z = 10 * mm      # axial crystal size (also depth in radial direction)
-    n_crystals_xy = 3        # 3×3 array per module
-    gap = 0.2 * mm           # inter-crystal gap
-    pitch = crystal_xy + gap
+    crystal_xy = 3 * mm      # transverse crystal size (x and z faces)
+    crystal_z = 10 * mm      # crystal depth (radial direction)
+    n_crystals_trans = 3     # crystals along transverse direction (y in module frame)
+    n_crystals_axial = 3     # crystals along axial direction (z in module frame)
+    pitch = crystal_xy       # no gap between crystals
 
-    module_xy = n_crystals_xy * crystal_xy + (n_crystals_xy - 1) * gap  # 9.4 mm
-    module_z = module_xy                                                   # square face
-    module_depth = crystal_z                                               # 10 mm radial depth
+    module_trans = n_crystals_trans * crystal_xy   # 9 mm  (transverse)
+    module_axial = n_crystals_axial * crystal_xy   # 9 mm  (axial)
+    module_depth = crystal_z                        # 10 mm (radial)
 
     ring_inner_r = 100 * mm
-    ring_outer_r = ring_inner_r + module_depth                            # 110 mm
-    ring_mid_r = ring_inner_r + module_depth / 2                          # 105 mm
+    ring_outer_r = ring_inner_r + module_depth      # 110 mm
+    ring_mid_r = ring_inner_r + module_depth / 2    # 105 mm
     n_modules = 20
 
     # World
@@ -56,17 +55,18 @@ def create_simulation(paths, generator=None):
     sim.world.size = [2 * world_r, 2 * world_r, 4 * crystal_z]
     sim.world.material = "G4_AIR"
 
-    # Ring air container (purely for logical grouping — optional but clean)
+    # Ring air container (purely for logical grouping)
     ring = sim.add_volume("Tubs", "ring")
     ring.rmax = ring_outer_r + 1 * mm
     ring.rmin = ring_inner_r - 1 * mm
-    ring.dz = module_z / 2 + 1 * mm
+    ring.dz = module_axial / 2 + 1 * mm
     ring.material = "G4_AIR"
 
     # Detector module (air box — holds the crystal array)
+    # In module frame: x = radial (depth), y = transverse, z = axial
     module = sim.add_volume("Box", "module")
     module.mother = ring.name
-    module.size = [module_depth, module_xy, module_z]   # x = radial, y/z = transverse/axial
+    module.size = [module_depth, module_trans, module_axial]
     module.material = "G4_AIR"
 
     translations_ring, rotations_ring = geo_util.get_circular_repetition(
@@ -78,14 +78,14 @@ def create_simulation(paths, generator=None):
     module.translation = translations_ring
     module.rotation = rotations_ring
 
-    # BGO crystal (3×3×10 mm) — the sensitive volume
+    # BGO crystal — the sensitive volume
     crystal = sim.add_volume("Box", "crystal")
     crystal.mother = module.name
     crystal.size = [crystal_z, crystal_xy, crystal_xy]  # radial × transverse × axial
     crystal.material = "BGO"
 
     crystal.translation = geo_util.get_grid_repetition(
-        [1, n_crystals_xy, n_crystals_xy],
+        [1, n_crystals_trans, n_crystals_axial],
         [0, pitch, pitch],
     )
 
@@ -110,7 +110,12 @@ def create_simulation(paths, generator=None):
     hc.authorize_repeated_volumes = True
     hc.output_filename = hits_filename
     hc.attributes = [
-        "PostPositionLocal",
+        # NOTE: PostPositionLocalModule stores coordinates in GATE's module frame:
+        #   X = depth (radial), Y = transverse, Z = axial
+        # This axis order may differ from your detector/model convention — use
+        # local_axes_order on DigitizerOpticalGenerativeActor to remap if needed.
+        "PostPositionLocalModule",
+        "PostPosition",
         "TotalEnergyDeposit",
         "GlobalTime",
     ]
@@ -125,6 +130,9 @@ def create_simulation(paths, generator=None):
     og.input_digi_collection = hc.name
     og.generator = generator
     og.output_filename = output_filename
+    # Remap GATE module frame axes to detector convention:
+    # GATE: (x=depth, y=transverse, z=axial) → model: (transverse, axial, depth)
+    og.local_axes_order = [1, 2, 0]
 
     sim.run_timing_intervals = [[0, 0.05 * sec]]
 

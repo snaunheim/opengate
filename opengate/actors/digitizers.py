@@ -739,6 +739,16 @@ class DigitizerOpticalGenerativeActor(
                 "sensor-origin frame (z in [0, 20] mm).",
             },
         ),
+        "local_axes_order": (
+            [0, 1, 2],
+            {
+                "doc": "Permutation of [0,1,2] applied to the crystal-local "
+                "coordinates before they are passed to the generator. "
+                "PostPositionLocal gives (x=radial/depth, y=transverse, z=axial). "
+                "If the model expects (transverse, axial, depth) use [1, 2, 0]. "
+                "Applied before local_position_offset.",
+            },
+        ),
         "optical_properties_file": (
             Path(os.path.dirname(os.path.dirname(__file__))) / "data" / "OpticalProperties.xml",
             {
@@ -779,11 +789,13 @@ class DigitizerOpticalGenerativeActor(
     def _call_generator(self, cpp_actor):
         # called once per synthetic photon by the C++ loop;
         # writes one photon record into the scalar fOutput* fields
+        coords = [cpp_actor.fInputX, cpp_actor.fInputY, cpp_actor.fInputZ]
+        ax = self.user_info.local_axes_order
         off = self.user_info.local_position_offset
         X, Y, dX, dY, dZ, Ekine, Time = self.user_info.generator.generate(
-            cpp_actor.fInputX + off[0],
-            cpp_actor.fInputY + off[1],
-            cpp_actor.fInputZ + off[2],
+            coords[ax[0]] + off[0],
+            coords[ax[1]] + off[1],
+            coords[ax[2]] + off[2],
             cpp_actor.fInputTime,
         )
         cpp_actor.fOutputX = X
