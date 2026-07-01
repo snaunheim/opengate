@@ -11,7 +11,6 @@
 #include "GateHelpersDigitizer.h"
 #include "GateTDigiAttribute.h"
 #include <G4Poisson.hh>
-#include <cmath>
 
 GateDigitizerOpticalGenerativeActor::GateDigitizerOpticalGenerativeActor(
     py::dict &user_info)
@@ -131,8 +130,7 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
           fOutputDYAttribute->FillDValue(fOutputDY);
           fOutputDZAttribute->FillDValue(fOutputDZ);
           fOutputEkineAttribute->FillDValue(fOutputEkine);
-          // LogTime from the model is converted to linear time before storage
-          fOutputTimeAttribute->FillDValue(std::exp(fOutputLogTime));
+          fOutputTimeAttribute->FillDValue(fOutputTime);
           fOutputSourceHitIndexAttribute->FillDValue(sourceHitIndex);
         }
       }

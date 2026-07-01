@@ -58,7 +58,7 @@ public:
   double fOutputDY;
   double fOutputDZ;
   double fOutputEkine;
-  double fOutputLogTime;
+  double fOutputTime;
 
 protected:
   void DigitInitialize(

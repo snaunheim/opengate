@@ -47,6 +47,6 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
                      &GateDigitizerOpticalGenerativeActor::fOutputDZ)
       .def_readwrite("fOutputEkine",
                      &GateDigitizerOpticalGenerativeActor::fOutputEkine)
-      .def_readwrite("fOutputLogTime",
-                     &GateDigitizerOpticalGenerativeActor::fOutputLogTime);
+      .def_readwrite("fOutputTime",
+                     &GateDigitizerOpticalGenerativeActor::fOutputTime);
 }

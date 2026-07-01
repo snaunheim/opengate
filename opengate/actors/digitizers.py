@@ -695,9 +695,9 @@ class DigitizerOpticalGenerativeActor(
 
     The generator must be an object with a method:
         generate(x, y, z, edep, time) -> iterable of
-            (X, Y, dX, dY, dZ, Ekine, LogTime) tuples
+            (X, Y, dX, dY, dZ, Ekine, Time) tuples
     one tuple per synthesized optical photon (the number of tuples, N, is
-    decided by the generator itself and may vary call to call). LogTime is
+    decided by the generator itself and may vary call to call). Time is
     converted to linear time by this actor before being written to the
     output collection.
 
@@ -722,7 +722,7 @@ class DigitizerOpticalGenerativeActor(
             None,
             {
                 "doc": "Object implementing generate(x, y, z, edep, time) -> "
-                "iterable of (X, Y, dX, dY, dZ, Ekine, LogTime) tuples. "
+                "iterable of (X, Y, dX, dY, dZ, Ekine, Time) tuples. "
                 "One call is made per input digi.",
             },
         ),
@@ -780,7 +780,7 @@ class DigitizerOpticalGenerativeActor(
         # called once per synthetic photon by the C++ loop;
         # writes one photon record into the scalar fOutput* fields
         off = self.user_info.local_position_offset
-        X, Y, dX, dY, dZ, Ekine, LogTime = self.user_info.generator.generate(
+        X, Y, dX, dY, dZ, Ekine, Time = self.user_info.generator.generate(
             cpp_actor.fInputX + off[0],
             cpp_actor.fInputY + off[1],
             cpp_actor.fInputZ + off[2],
@@ -792,7 +792,7 @@ class DigitizerOpticalGenerativeActor(
         cpp_actor.fOutputDY = dY
         cpp_actor.fOutputDZ = dZ
         cpp_actor.fOutputEkine = Ekine
-        cpp_actor.fOutputLogTime = LogTime
+        cpp_actor.fOutputTime = Time
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)

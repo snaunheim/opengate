@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import math
 import numpy as np
 
 
@@ -12,7 +11,7 @@ class FixedNMockGenerator:
     Called once per synthetic photon (N is determined by the actor via Poisson
     sampling from edep * scintillation_yield). Returns a single photon record.
 
-    generate(x, y, z, time) -> (X, Y, dX, dY, dZ, Ekine, LogTime)
+    generate(x, y, z, time) -> (X, Y, dX, dY, dZ, Ekine, Time)
     """
 
     def __init__(self):
@@ -26,8 +25,7 @@ class FixedNMockGenerator:
         dY = 0.0
         dZ = 1.0
         Ekine = 3.0  # eV, typical optical photon energy for BGO
-        LogTime = math.log(max(time, 1e-30))
-        return X, Y, dX, dY, dZ, Ekine, LogTime
+        return X, Y, dX, dY, dZ, Ekine, time
 
 
 def check_output(output_root_path, hits_root_path):
