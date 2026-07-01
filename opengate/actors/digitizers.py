@@ -1,5 +1,7 @@
 from typing import List
+import os
 import numpy as np
+from pathlib import Path
 from scipy.spatial.transform import Rotation
 import opengate_core as g4
 from ..base import process_cls
@@ -7,6 +9,7 @@ from .base import ActorBase
 from ..exception import fatal
 from ..definitions import fwhm_to_sigma
 from ..utility import g4_units
+from ..physics import load_optical_properties_from_xml
 from ..image import (
     align_image_with_physical_volume,
     update_image_py_to_cpp,
@@ -698,7 +701,7 @@ class DigitizerOpticalGenerativeActor(
     converted to linear time by this actor before being written to the
     output collection.
 
-    Input: a digi collection with at least TotalEnergyDeposit, PostPosition
+    Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocal
     and GlobalTime attributes (e.g. the output of a
     DigitizerHitsCollectionActor, used directly, without an Adder in
     between: each input row is treated as one energy-deposition point).
@@ -721,6 +724,28 @@ class DigitizerOpticalGenerativeActor(
                 "doc": "Object implementing generate(x, y, z, edep, time) -> "
                 "iterable of (X, Y, dX, dY, dZ, Ekine, LogTime) tuples. "
                 "One call is made per input digi.",
+            },
+        ),
+        "local_position_offset": (
+            [0.0, 0.0, 0.0],
+            {
+                "doc": "Offset (dx, dy, dz) in mm added to the crystal-local "
+                "PostPositionLocal coordinates before they are passed to the "
+                "generator. Use this to match the coordinate convention the "
+                "model was trained on. For example, if the model expects z=0 "
+                "at the sensor face and z=crystal_depth at the entry face of a "
+                "20 mm crystal, set local_position_offset=[0, 0, 10] to shift "
+                "from the default centered frame (z in [-10, +10] mm) to the "
+                "sensor-origin frame (z in [0, 20] mm).",
+            },
+        ),
+        "optical_properties_file": (
+            Path(os.path.dirname(os.path.dirname(__file__))) / "data" / "OpticalProperties.xml",
+            {
+                "doc": "Path to the XML file containing optical material properties. "
+                "The scintillation yield (SCINTILLATIONYIELD, in photons/MeV) is "
+                "read automatically from this file for the material of the attached "
+                "volume. Defaults to opengate/data/OpticalProperties.xml.",
             },
         ),
         "skip_attributes": (
@@ -752,32 +777,22 @@ class DigitizerOpticalGenerativeActor(
         self.InitializeCpp()
 
     def _call_generator(self, cpp_actor):
-        # cpp_actor is 'self' (passed explicitly by the C++ side, as a
-        # std::function<void(GateDigitizerOpticalGenerativeActor*)> call,
-        # the same convention as GANSourceDefaultGenerator.generator)
-        results = self.user_info.generator.generate(
-            cpp_actor.fInputX,
-            cpp_actor.fInputY,
-            cpp_actor.fInputZ,
-            cpp_actor.fInputEdep,
+        # called once per synthetic photon by the C++ loop;
+        # writes one photon record into the scalar fOutput* fields
+        off = self.user_info.local_position_offset
+        X, Y, dX, dY, dZ, Ekine, LogTime = self.user_info.generator.generate(
+            cpp_actor.fInputX + off[0],
+            cpp_actor.fInputY + off[1],
+            cpp_actor.fInputZ + off[2],
             cpp_actor.fInputTime,
         )
-        x, y, dx, dy, dz, ekine, log_time = [], [], [], [], [], [], []
-        for X, Y, dX, dY, dZ, Ekine, LogTime in results:
-            x.append(X)
-            y.append(Y)
-            dx.append(dX)
-            dy.append(dY)
-            dz.append(dZ)
-            ekine.append(Ekine)
-            log_time.append(LogTime)
-        cpp_actor.fOutputX = x
-        cpp_actor.fOutputY = y
-        cpp_actor.fOutputDX = dx
-        cpp_actor.fOutputDY = dy
-        cpp_actor.fOutputDZ = dz
-        cpp_actor.fOutputEkine = ekine
-        cpp_actor.fOutputLogTime = log_time
+        cpp_actor.fOutputX = X
+        cpp_actor.fOutputY = Y
+        cpp_actor.fOutputDX = dX
+        cpp_actor.fOutputDY = dY
+        cpp_actor.fOutputDZ = dZ
+        cpp_actor.fOutputEkine = Ekine
+        cpp_actor.fOutputLogTime = LogTime
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
@@ -785,8 +800,24 @@ class DigitizerOpticalGenerativeActor(
             fatal(
                 f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
                 f"'generator' object implementing "
-                f"generate(x, y, z, edep, time)."
+                f"generate(x, y, z, time)."
             )
+        # read scintillation yield from the optical properties XML for the
+        # material of the attached volume
+        volume = self.simulation.volume_manager.get_volume(self.attached_to)
+        material_name = volume.material
+        props = load_optical_properties_from_xml(
+            self.user_info.optical_properties_file, material_name
+        )
+        if props is None or "SCINTILLATIONYIELD" not in props["constant_properties"]:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': could not find "
+                f"SCINTILLATIONYIELD for material '{material_name}' in "
+                f"{self.user_info.optical_properties_file}."
+            )
+        self.fScintillationYield = props["constant_properties"]["SCINTILLATIONYIELD"][
+            "property_value"
+        ]
         self.SetGeneratorFunction(self._call_generator)
         g4.GateDigitizerOpticalGenerativeActor.StartSimulationAction(self)
 
