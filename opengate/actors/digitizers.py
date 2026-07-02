@@ -10,6 +10,7 @@ from ..exception import fatal
 from ..definitions import fwhm_to_sigma
 from ..utility import g4_units
 from ..physics import load_optical_properties_from_xml
+from ..contrib.optical.generative_bundle import GenerativeModelBundle
 from ..image import (
     align_image_with_physical_volume,
     update_image_py_to_cpp,
@@ -693,9 +694,15 @@ class DigitizerOpticalGenerativeActor(
     model implementing the same 'generate' interface) bridge the optical
     response live, inside a standard system simulation.
 
-    The generator must be an object with a method:
+    The generator can be either:
+      - an object with a method
         generate_batch(x, y, z, time, n_photons) -> tuple of 7 arrays
             (X, Y, dX, dY, dZ, Ekine, Time), each of length n_photons
+      - a string/Path to a generative model bundle directory or zip (see
+        docs/generative_bundle_contract.md and
+        opengate.contrib.optical.generative_bundle.GenerativeModelBundle),
+        in which case local_axes_order and local_position_offset are
+        auto-configured from the bundle's manifest.
     The method is called once per hit (not once per photon), so a GPU
     model can process the full batch in a single forward pass.
 
@@ -721,7 +728,11 @@ class DigitizerOpticalGenerativeActor(
             {
                 "doc": "Object implementing generate_batch(x, y, z, time, n_photons) "
                 "-> tuple of 7 arrays (X, Y, dX, dY, dZ, Ekine, Time) each of "
-                "length n_photons. Called once per hit for efficient GPU batching.",
+                "length n_photons. Called once per hit for efficient GPU batching. "
+                "Alternatively, a string/Path to a generative model bundle "
+                "directory or zip (see docs/generative_bundle_contract.md); "
+                "local_axes_order and local_position_offset are then "
+                "auto-configured from the bundle's manifest.",
             },
         ),
         "local_position_offset": (
@@ -804,6 +815,53 @@ class DigitizerOpticalGenerativeActor(
         cpp_actor.fOutputEkine = list(Ekine)
         cpp_actor.fOutputTime = list(Time)
 
+    def _resolve_bundle_generator(self):
+        # generator is a string/Path to a generative model bundle: load it and
+        # auto-configure/validate local_axes_order and local_position_offset
+        # against the bundle's manifest (docs/generative_bundle_contract.md).
+        bundle = GenerativeModelBundle(self.user_info.generator)
+        expected_axes_order = bundle.expected_local_axes_order()
+        expected_offset = bundle.expected_local_position_offset()
+
+        axes_order_was_set = self.user_info.local_axes_order != [0, 1, 2]
+        offset_was_set = self.user_info.local_position_offset != [0.0, 0.0, 0.0]
+
+        if axes_order_was_set:
+            if self.user_info.local_axes_order != expected_axes_order:
+                fatal(
+                    f"DigitizerOpticalGenerativeActor '{self.name}': "
+                    f"local_axes_order={self.user_info.local_axes_order} was set "
+                    f"explicitly, but the generative model bundle "
+                    f"'{self.user_info.generator}' declares "
+                    f"coordinates.axes_order="
+                    f"{bundle.coordinates['axes_order']}, which implies "
+                    f"local_axes_order={expected_axes_order}. Remove the "
+                    f"explicit local_axes_order to let it be auto-configured "
+                    f"from the bundle, or set it to the expected value."
+                )
+        else:
+            self.user_info.local_axes_order = expected_axes_order
+
+        if offset_was_set:
+            if self.user_info.local_position_offset != expected_offset:
+                fatal(
+                    f"DigitizerOpticalGenerativeActor '{self.name}': "
+                    f"local_position_offset={self.user_info.local_position_offset} "
+                    f"was set explicitly, but the generative model bundle "
+                    f"'{self.user_info.generator}' declares coordinates.origin="
+                    f"{bundle.coordinates.get('origin')!r} with "
+                    f"training.crystal_size_mm="
+                    f"{bundle.manifest['training']['crystal_size_mm']}, which "
+                    f"implies local_position_offset={expected_offset}. Remove "
+                    f"the explicit local_position_offset to let it be "
+                    f"auto-configured from the bundle, or set it to the "
+                    f"expected value."
+                )
+        else:
+            self.user_info.local_position_offset = expected_offset
+
+        self.user_info.generator = bundle
+
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
         if self.user_info.generator is None:
@@ -812,6 +870,8 @@ class DigitizerOpticalGenerativeActor(
                 f"'generator' object implementing "
                 f"generate_batch(x, y, z, time, n_photons)."
             )
+        if isinstance(self.user_info.generator, (str, Path)):
+            self._resolve_bundle_generator()
         # read scintillation yield from the optical properties XML for the
         # material of the attached volume
         volume = self.simulation.volume_manager.get_volume(self.attached_to)
