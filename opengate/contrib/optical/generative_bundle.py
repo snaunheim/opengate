@@ -230,19 +230,19 @@ class GenerativeModelBundle:
     def _generate_batch_torch(self, x, y, z, time, n_photons):
         import torch
 
-        inputs = torch.tensor(
-            [[x, y, z, time]], dtype=torch.float32
-        ).expand(n_photons, 4)
         with torch.no_grad():
-            output = self._model(inputs)
-        output = output.cpu().numpy().astype(np.float64)
-        return tuple(output[:, i] for i in range(7))
+            output = self._model(float(x), float(y), float(z), float(time), int(n_photons))
+        return tuple(
+            np.asarray(t.cpu().numpy(), dtype=np.float64) for t in output
+        )
 
     def _generate_batch_onnx(self, x, y, z, time, n_photons):
-        inputs = np.tile(
-            np.array([[x, y, z, time]], dtype=np.float32), (n_photons, 1)
-        )
-        input_name = self._model.get_inputs()[0].name
-        (output,) = self._model.run(None, {input_name: inputs})
-        output = output.astype(np.float64)
-        return tuple(output[:, i] for i in range(7))
+        feeds = {
+            "x": np.array(x, dtype=np.float32),
+            "y": np.array(y, dtype=np.float32),
+            "z": np.array(z, dtype=np.float32),
+            "time": np.array(time, dtype=np.float32),
+            "n_photons_carrier": np.zeros(n_photons, dtype=np.int64),
+        }
+        outputs = self._model.run(None, feeds)
+        return tuple(np.asarray(o, dtype=np.float64) for o in outputs)
