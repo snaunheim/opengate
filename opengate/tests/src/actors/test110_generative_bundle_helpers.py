@@ -13,29 +13,31 @@ def make_torchscript_bundle(bundle_dir, axes_order=None, origin="crystal_center"
     """
     Builds a tiny TorchScript model bundle (manifest.json + model file) in
     bundle_dir, conforming to docs/generative_bundle_contract.md. The model
-    takes (x, y, z, time) per photon and deterministically returns
-    (X, Y, dX, dY, dZ, Ekine, Time) so tests can check values exactly.
+    implements generate_batch(x, y, z, time, n_photons) as 5 scalar args and
+    deterministically returns (X, Y, dX, dY, dZ, Ekine, Time), each a 1-D
+    tensor of length n_photons, so tests can check values exactly.
 
     Only called if TORCH_AVAILABLE is True.
     """
     import torch
     import torch.nn as nn
+    from typing import Tuple
 
     if axes_order is None:
         axes_order = ["depth", "transverse", "axial"]
 
     class TinyGenerator(nn.Module):
-        def forward(self, xyzt):
-            x, y, z, t = xyzt[:, 0], xyzt[:, 1], xyzt[:, 2], xyzt[:, 3]
-            n = xyzt.shape[0]
-            X = x
-            Y = y
-            dX = torch.zeros(n)
-            dY = torch.zeros(n)
-            dZ = torch.ones(n)
-            Ekine = torch.full((n,), 3.0)
-            Time = torch.ones(n)  # 1 ns delay, relative to hit time
-            return torch.stack([X, Y, dX, dY, dZ, Ekine, Time], dim=1)
+        def forward(
+            self, x: float, y: float, z: float, time: float, n_photons: int
+        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            X = torch.full((n_photons,), x)
+            Y = torch.full((n_photons,), y)
+            dX = torch.zeros(n_photons)
+            dY = torch.zeros(n_photons)
+            dZ = torch.ones(n_photons)
+            Ekine = torch.full((n_photons,), 3.0)
+            Time = torch.ones(n_photons)  # 1 ns delay, relative to hit time
+            return X, Y, dX, dY, dZ, Ekine, Time
 
     model = torch.jit.script(TinyGenerator())
     model_file = "model.pt"
