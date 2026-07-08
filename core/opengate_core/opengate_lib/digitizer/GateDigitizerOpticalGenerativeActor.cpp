@@ -119,6 +119,12 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
       const long N =
           G4Poisson((*l.edep) * fScintillationYield);
 
+      // monotonic across the whole run (unlike iter.fIndex, which is
+      // relative to the input digi collection's current buffer and gets
+      // reused across events once that collection is flushed/cleared)
+      const auto sourceHitIndex = static_cast<double>(l.nHitsProcessed);
+      l.nHitsProcessed++;
+
       if (N > 0) {
         // set inputs; generator is called once per hit with batch size N
         fInputX = l.pos->x();
@@ -129,7 +135,6 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
 
         fGenerator(this);  // fills fOutputX/Y/DX/DY/DZ/Ekine/Time as vectors
 
-        const auto sourceHitIndex = static_cast<double>(iter.fIndex);
         for (long i = 0; i < N; ++i) {
           fOutputXAttribute->FillDValue(fOutputX[i]);
           fOutputYAttribute->FillDValue(fOutputY[i]);

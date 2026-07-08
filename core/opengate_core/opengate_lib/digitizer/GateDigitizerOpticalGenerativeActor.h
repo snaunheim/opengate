@@ -80,6 +80,10 @@ protected:
     double *edep{};
     G4ThreeVector *pos{};
     double *time{};
+    // monotonic count of hits processed so far on this thread, across the
+    // whole run (not reset per event); used as SourceHitIndex so that hits
+    // from different events never alias onto the same index.
+    long nHitsProcessed{0};
   };
   G4Cache<threadLocalT> fThreadLocalData;
 };
