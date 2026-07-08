@@ -35,19 +35,19 @@ def create_simulation(paths, generator=None, n_modules=20, add_optical_generator
     # Module arc width ≈ 10 mm (crystal depth in radial dir) → 20 modules fit comfortably.
     # ---------------------------------------------------------------------------
 
-    crystal_xy = 3 * mm      # transverse crystal size (x and z faces)
-    crystal_z = 10 * mm      # crystal depth (radial direction)
-    n_crystals_trans = 3     # crystals along transverse direction (y in module frame)
-    n_crystals_axial = 3     # crystals along axial direction (z in module frame)
-    pitch = crystal_xy       # no gap between crystals
+    crystal_xy = 3 * mm  # transverse crystal size (x and z faces)
+    crystal_z = 10 * mm  # crystal depth (radial direction)
+    n_crystals_trans = 3  # crystals along transverse direction (y in module frame)
+    n_crystals_axial = 3  # crystals along axial direction (z in module frame)
+    pitch = crystal_xy  # no gap between crystals
 
-    module_trans = n_crystals_trans * crystal_xy   # 9 mm  (transverse)
-    module_axial = n_crystals_axial * crystal_xy   # 9 mm  (axial)
-    module_depth = crystal_z                        # 10 mm (radial)
+    module_trans = n_crystals_trans * crystal_xy  # 9 mm  (transverse)
+    module_axial = n_crystals_axial * crystal_xy  # 9 mm  (axial)
+    module_depth = crystal_z  # 10 mm (radial)
 
     ring_inner_r = 100 * mm
-    ring_outer_r = ring_inner_r + module_depth      # 110 mm
-    ring_mid_r = ring_inner_r + module_depth / 2    # 105 mm
+    ring_outer_r = ring_inner_r + module_depth  # 110 mm
+    ring_mid_r = ring_inner_r + module_depth / 2  # 105 mm
 
     # World
     world_r = ring_outer_r + 50 * mm
@@ -97,7 +97,7 @@ def create_simulation(paths, generator=None, n_modules=20, add_optical_generator
     source.activity = 5000 * Bq
     source.position.type = "point"
     source.position.translation = [0, 0, 0]
-    source.direction.theta = [90 * deg, 90 * deg]   # transaxial plane only
+    source.direction.theta = [90 * deg, 90 * deg]  # transaxial plane only
     source.direction.phi = [0, 360 * deg]
 
     # Hits collection on the BGO crystals

@@ -86,8 +86,7 @@ def check_output(output_root_path, hits_root_path):
         block_starts = np.concatenate([[0], transitions + 1])
         block_ends = np.concatenate([transitions + 1, [n_output]])
         all_consistent = all(
-            np.all(src_idx[s:e] == src_idx[s])
-            for s, e in zip(block_starts, block_ends)
+            np.all(src_idx[s:e] == src_idx[s]) for s, e in zip(block_starts, block_ends)
         )
         if not all_consistent:
             print("FAIL: SourceHitIndex not consistent within photon groups")

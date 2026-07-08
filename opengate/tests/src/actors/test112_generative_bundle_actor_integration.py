@@ -6,7 +6,7 @@ import shutil
 import opengate.tests.utility as tu
 
 from test110_generative_bundle_helpers import TORCH_AVAILABLE, make_torchscript_bundle
-from test108_optical_generative_actor_simulation import create_simulation
+from og_actor108_sim_setup import create_simulation
 
 if __name__ == "__main__":
     paths = tu.get_default_test_paths(

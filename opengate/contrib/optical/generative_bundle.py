@@ -10,7 +10,7 @@ SUPPORTED_SCHEMA_VERSION = 1
 SUPPORTED_FORMATS = ("torchscript", "onnx", "aotinductor")
 
 # GATE's crystal-local frame (PostPositionLocal / PostPositionLocalModule) is
-# (x=depth/radial, y=transverse, z=axial); see test109_optical_generative_actor_pet_simulation.py.
+# (x=depth/radial, y=transverse, z=axial); see og_actor109_pet_sim_setup.py.
 GATE_LOCAL_AXES = ("depth", "transverse", "axial")
 
 
@@ -231,10 +231,10 @@ class GenerativeModelBundle:
         import torch
 
         with torch.no_grad():
-            output = self._model(float(x), float(y), float(z), float(time), int(n_photons))
-        return tuple(
-            np.asarray(t.cpu().numpy(), dtype=np.float64) for t in output
-        )
+            output = self._model(
+                float(x), float(y), float(z), float(time), int(n_photons)
+            )
+        return tuple(np.asarray(t.cpu().numpy(), dtype=np.float64) for t in output)
 
     def _generate_batch_onnx(self, x, y, z, time, n_photons):
         feeds = {

@@ -759,7 +759,9 @@ class DigitizerOpticalGenerativeActor(
             },
         ),
         "optical_properties_file": (
-            Path(os.path.dirname(os.path.dirname(__file__))) / "data" / "OpticalProperties.xml",
+            Path(os.path.dirname(os.path.dirname(__file__)))
+            / "data"
+            / "OpticalProperties.xml",
             {
                 "doc": "Path to the XML file containing optical material properties. "
                 "The scintillation yield (SCINTILLATIONYIELD, in photons/MeV) is "

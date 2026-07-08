@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import opengate.tests.utility as tu
-from test108_optical_generative_actor_simulation import create_simulation
+from og_actor108_sim_setup import create_simulation
 from test108_optical_generative_actor_helpers import check_output
 
 if __name__ == "__main__":
@@ -15,6 +15,7 @@ if __name__ == "__main__":
     sim.run(start_new_process=False)
 
     import os
+
     print(f"Hits file exists: {os.path.exists(hits_path)}")
     print(f"Optical file exists: {os.path.exists(output_path)}")
 

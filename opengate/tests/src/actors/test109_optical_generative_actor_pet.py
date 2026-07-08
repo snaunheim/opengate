@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import opengate.tests.utility as tu
-from test109_optical_generative_actor_pet_simulation import create_simulation
+from og_actor109_pet_sim_setup import create_simulation
 
 import sys
 import os

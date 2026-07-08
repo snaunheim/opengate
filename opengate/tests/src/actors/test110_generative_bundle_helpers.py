@@ -29,7 +29,15 @@ def make_torchscript_bundle(bundle_dir, axes_order=None, origin="crystal_center"
     class TinyGenerator(nn.Module):
         def forward(
             self, x: float, y: float, z: float, time: float, n_photons: int
-        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        ) -> Tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+        ]:
             X = torch.full((n_photons,), x)
             Y = torch.full((n_photons,), y)
             dX = torch.zeros(n_photons)
