@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from test108_optical_generative_actor_helpers import FixedNMockGenerator
 
 
-def create_simulation(paths, generator=None):
+def create_simulation(paths, generator=None, n_modules=20, add_optical_generator=True):
     mm = gate.g4_units.mm
     MeV = gate.g4_units.MeV
     Bq = gate.g4_units.Bq
@@ -48,7 +48,6 @@ def create_simulation(paths, generator=None):
     ring_inner_r = 100 * mm
     ring_outer_r = ring_inner_r + module_depth      # 110 mm
     ring_mid_r = ring_inner_r + module_depth / 2    # 105 mm
-    n_modules = 20
 
     # World
     world_r = ring_outer_r + 50 * mm
@@ -118,21 +117,26 @@ def create_simulation(paths, generator=None):
         "PostPosition",
         "TotalEnergyDeposit",
         "GlobalTime",
+        "PreStepUniqueVolumeID",
+        "EventID",
     ]
 
     # Optical generative actor — replaces expensive optical photon tracking
-    if generator is None:
-        generator = FixedNMockGenerator()
+    if add_optical_generator:
+        use_mock_generator = generator is None
+        if use_mock_generator:
+            generator = FixedNMockGenerator()
 
-    og = sim.add_actor("DigitizerOpticalGenerativeActor", "SyntheticPhotons")
-    og.attached_to = crystal.name
-    og.authorize_repeated_volumes = True
-    og.input_digi_collection = hc.name
-    og.generator = generator
-    og.output_filename = output_filename
-    # Remap GATE module frame axes to detector convention:
-    # GATE: (x=depth, y=transverse, z=axial) → model: (transverse, axial, depth)
-    og.local_axes_order = [1, 2, 0]
+        og = sim.add_actor("DigitizerOpticalGenerativeActor", "SyntheticPhotons")
+        og.attached_to = crystal.name
+        og.authorize_repeated_volumes = True
+        og.input_digi_collection = hc.name
+        og.generator = generator
+        og.output_filename = output_filename
+        if use_mock_generator:
+            # Remap GATE module frame axes to the mock generator's convention:
+            # GATE: (x=depth, y=transverse, z=axial) → model: (transverse, axial, depth)
+            og.local_axes_order = [1, 2, 0]
 
     sim.run_timing_intervals = [[0, 0.05 * sec]]
 
