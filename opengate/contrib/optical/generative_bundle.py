@@ -142,8 +142,9 @@ class GenerativeModelBundle:
             )
         import io
 
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         buffer = io.BytesIO(self._read_model_bytes())
-        model = torch.jit.load(buffer, map_location="cpu")
+        model = torch.jit.load(buffer, map_location=device)
         model.eval()
         return model
 
@@ -157,7 +158,8 @@ class GenerativeModelBundle:
                 f"installed. Try: pip install onnxruntime"
             )
         return onnxruntime.InferenceSession(
-            self._read_model_bytes(), providers=["CPUExecutionProvider"]
+            self._read_model_bytes(),
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
 
     def _load_aotinductor_model(self):
@@ -182,7 +184,8 @@ class GenerativeModelBundle:
                 f"declares model_file='{self.manifest['model_file']}', but "
                 f"that file does not exist."
             )
-        return torch._export.aot_load(str(model_path), device="cpu")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        return torch._export.aot_load(str(model_path), device=device)
 
     # -- coordinate convention ------------------------------------------
 
