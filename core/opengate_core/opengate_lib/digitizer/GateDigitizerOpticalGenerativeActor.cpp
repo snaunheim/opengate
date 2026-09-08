@@ -65,6 +65,10 @@ void GateDigitizerOpticalGenerativeActor::StartSimulationAction() {
       new GateTDigiAttribute<double>("SourceHitIndex"));
 
   fOutputDigiCollection->RootInitializeTupleForMaster();
+  // Since we do not call GateVDigitizerWithOutputActor::StartSimulationAction,
+  // register the output tree info here, as it does (and as
+  // GateDigitizerAdderActor does for the same reason).
+  AddOutputTreeInfo(fOutputNameRoot, fOutputDigiCollection);
 
   // check required attributes on the input (raw Hits) collection
   CheckRequiredAttribute(fInputDigiCollection, "TotalEnergyDeposit");
@@ -85,7 +89,8 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   // input iterator and the output attribute pointers ourselves.
   (void)attributes_not_in_filler;
 
-  // Must call this here since we bypass GateVDigitizerWithOutputActor::DigitInitialize
+  // Must call this here since we bypass
+  // GateVDigitizerWithOutputActor::DigitInitialize
   fOutputDigiCollection->RootInitializeTupleForWorker();
 
   fOutputXAttribute = fOutputDigiCollection->GetDigiAttribute("X");
@@ -116,8 +121,7 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
   while (!iter.IsAtEnd()) {
     if (*l.edep > 0) {
       // sample N from Poisson(edep * scintillation_yield)
-      const long N =
-          G4Poisson((*l.edep) * fScintillationYield);
+      const long N = G4Poisson((*l.edep) * fScintillationYield);
 
       // monotonic across the whole run (unlike iter.fIndex, which is
       // relative to the input digi collection's current buffer and gets
@@ -133,7 +137,7 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
         fInputTime = *l.time;
         fInputN = N;
 
-        fGenerator(this);  // fills fOutputX/Y/DX/DY/DZ/Ekine/Time as vectors
+        fGenerator(this); // fills fOutputX/Y/DX/DY/DZ/Ekine/Time as vectors
 
         for (long i = 0; i < N; ++i) {
           fOutputXAttribute->FillDValue(fOutputX[i]);
