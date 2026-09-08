@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from opengate.exception import fatal
+from opengate.exception import fatal, warning
 
 SUPPORTED_SCHEMA_VERSION = 1
 SUPPORTED_FORMATS = ("torchscript", "onnx", "aotinductor")
@@ -158,6 +158,12 @@ class GenerativeModelBundle:
         import io
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            warning(
+                f"Generative model bundle '{self.bundle_path}' is running on the "
+                f"CPU: torch.cuda.is_available() is False. Install a CUDA build "
+                f"of torch to use the GPU (see https://pytorch.org)."
+            )
         buffer = io.BytesIO(self._read_model_bytes())
         model = torch.jit.load(buffer, map_location=device)
         model.eval()
@@ -172,10 +178,37 @@ class GenerativeModelBundle:
                 f"onnxruntime (format='onnx'), but onnxruntime is not "
                 f"installed. Try: pip install onnxruntime"
             )
-        return onnxruntime.InferenceSession(
-            self._read_model_bytes(),
-            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        requested = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        session = onnxruntime.InferenceSession(
+            self._read_model_bytes(), providers=requested
         )
+        # onnxruntime falls back to the CPU silently when a requested provider
+        # cannot be created, which costs several times the inference speed with
+        # nothing in the output to say why. Say it out loud instead.
+        if "CUDAExecutionProvider" not in session.get_providers():
+            available = onnxruntime.get_available_providers()
+            if "CUDAExecutionProvider" in available:
+                hint = (
+                    "onnxruntime ships the CUDA provider but could not load it, "
+                    "which usually means its CUDA/cuDNN libraries are not on the "
+                    "loader path. If torch is installed with CUDA support, they "
+                    "are typically already in site-packages, e.g.:\n"
+                    "  export LD_LIBRARY_PATH="
+                    "$(python -c 'import site;print(site.getsitepackages()[0])')"
+                    "/nvidia/cu13/lib:$LD_LIBRARY_PATH\n"
+                    "Check the onnxruntime log lines above for the exact "
+                    "library it failed to open."
+                )
+            else:
+                hint = (
+                    "this onnxruntime build has no CUDA provider; "
+                    "'pip install onnxruntime-gpu' provides one."
+                )
+            warning(
+                f"Generative model bundle '{self.bundle_path}' is running on the "
+                f"CPU: {hint}"
+            )
+        return session
 
     def _load_aotinductor_model(self):
         try:

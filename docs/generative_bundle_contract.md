@@ -97,7 +97,7 @@ my_bundle/
 
 - **torchscript**: a model saved with `torch.jit.script(...).save(...)` or `torch.jit.trace(...).save(...)`. Loaded with `torch.jit.load` and run under `torch.no_grad()`. Requires `torch` to be installed; the import is
   deferred to load time, so bundles using other formats do not need it.
-- **onnx**: a model exported to ONNX. Loaded with `onnxruntime.InferenceSession` on the CPU execution provider. Requires `onnxruntime`. Unlike the other two formats, inputs are passed by name, not by position; see below.
+- **onnx**: a model exported to ONNX. Loaded with `onnxruntime.InferenceSession`, preferring the CUDA execution provider and falling back to the CPU (see [Running on the GPU](#running-on-the-gpu)). Requires `onnxruntime`. Unlike the other two formats, inputs are passed by name, not by position; see below.
 - **aotinductor**: a model compiled with `torch._export.aot_compile`. Loaded with `torch._export.aot_load`. Requires a directory bundle: the compiled `.so` cannot be read out of a zip, so an `aotinductor` bundle passed as a zip path is rejected at load time.
 
 ### A minimal torchscript example
@@ -178,6 +178,25 @@ torch.onnx.export(
 ```
 
 A model exported without `dynamic_axes` will only run for the exact batch size it was traced with, which `batch.dynamic: true` in the manifest is meant to document but does not itself enforce.
+
+## Running on the GPU
+
+Inference is the expensive part of a run that uses a generative bundle, so it is worth checking that it actually runs where you think it does. Both backends prefer the GPU and fall back to the CPU rather than failing, so a misconfigured environment costs speed, not correctness.
+
+`GenerativeModelBundle` warns when it ends up on the CPU, naming the reason, so you do not have to go looking. If you see no such warning, the model is on the GPU.
+
+**torchscript / aotinductor** use the GPU when `torch.cuda.is_available()`; if not, install a CUDA build of torch.
+
+**onnx** needs `onnxruntime-gpu` (the plain `onnxruntime` package has no CUDA provider at all) *and* needs onnxruntime to find its CUDA and cuDNN shared libraries at load time. The second part is the one that usually bites: unlike torch, which locates the libraries it ships with, onnxruntime searches only the loader path. So an environment where `torch.cuda.is_available()` is `True` can still run ONNX on the CPU, and the only sign is an onnxruntime log line about a library it could not open (e.g. `libcublasLt.so.13`).
+
+If torch is installed with CUDA support, those libraries are usually already in site-packages and only need to be on the path:
+
+```bash
+SP=$(python -c 'import site;print(site.getsitepackages()[0])')
+export LD_LIBRARY_PATH="$SP/nvidia/cu13/lib:$SP/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
+```
+
+Adjust `cu13` to the CUDA major version your `onnxruntime-gpu` was built against; the [onnxruntime CUDA requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements) table lists which versions pair with which. To make it permanent for a conda environment, put those two lines in `$CONDA_PREFIX/etc/conda/activate.d/`.
 
 ## Using a bundle
 
