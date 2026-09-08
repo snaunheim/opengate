@@ -195,3 +195,9 @@ og.generator = "path/to/my_bundle"   # or "path/to/my_bundle.zip"
 ## Validation
 
 Loading a bundle checks, in order: that `manifest.json` exists (directory or zip); that `schema_version` is `1`; that `format` is one of the three supported values; that `model_file` is present in the manifest and the file it names exists in the bundle; that `coordinates`, `training`, and `batch` sections are all present; and that `coordinates.axes_order` is a valid permutation of `depth`, `transverse`, `axial`. Any failure raises with a message naming the bundle path and the specific problem, rather than failing later inside a forward pass.
+
+### When validation happens
+
+When a bundle is used through `DigitizerOpticalGenerativeActor`, these checks run in the actor's `resolve_and_validate_config` phase, together with the reconciliation of `local_axes_order` / `local_position_offset` against the manifest and the lookup of the crystal's `SCINTILLATIONYIELD`. That phase runs before any Geant4 object exists, so a misconfigured bundle is rejected before the simulation engine starts — and, for a split simulation, before the run is packaged into jobs.
+
+The model file itself is deliberately *not* deserialized in that phase: the actor constructs the bundle with `defer_model_load=True` and calls `load_model()` in `StartSimulationAction`, so importing torch/onnxruntime and opening a GPU session happens only when a simulation actually runs. Constructing a `GenerativeModelBundle` directly, without that flag, still loads the model immediately, as before.

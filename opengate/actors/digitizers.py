@@ -785,12 +785,56 @@ class DigitizerOpticalGenerativeActor(
     }
 
     def __init__(self, *args, **kwargs):
+        # Resolved in resolve_and_validate_config, consumed in
+        # StartSimulationAction; None means "not resolved yet".
+        self._scintillation_yield = None
         DigitizerBase.__init__(self, *args, **kwargs)
         self.__initcpp__()
 
     def __initcpp__(self):
         g4.GateDigitizerOpticalGenerativeActor.__init__(self, self.user_info)
         self.AddActions({"StartSimulationAction", "EndSimulationAction"})
+
+    def resolve_and_validate_config(self, context=None):
+        # Validate everything that does not need the Geant4 runtime, so a
+        # misconfigured actor fails before the engine starts (and before a
+        # split simulation is packaged into jobs).
+        super().resolve_and_validate_config(context=context)
+
+        if self.user_info.generator is None:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
+                f"'generator' object implementing "
+                f"generate_batch(x, y, z, time, n_photons)."
+            )
+
+        # For a bundle path, read and validate the manifest and reconcile the
+        # coordinate convention now. The model itself is deliberately NOT
+        # deserialized here: that allocates GPU/session resources, which
+        # belongs in the runtime phase (see StartSimulationAction).
+        if isinstance(self.user_info.generator, (str, Path)):
+            self._resolve_bundle_config()
+
+        # Resolve the scintillation yield from the optical properties XML for
+        # the material of the attached volume. The volume manager is resolved
+        # before the actor manager, so the material is available here.
+        self._resolve_scintillation_yield()
+
+    def _resolve_scintillation_yield(self):
+        volume = self.simulation.volume_manager.get_volume(self.attached_to)
+        material_name = volume.material
+        props = load_optical_properties_from_xml(
+            self.user_info.optical_properties_file, material_name
+        )
+        if props is None or "SCINTILLATIONYIELD" not in props["constant_properties"]:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': could not find "
+                f"SCINTILLATIONYIELD for material '{material_name}' in "
+                f"{self.user_info.optical_properties_file}."
+            )
+        self._scintillation_yield = props["constant_properties"]["SCINTILLATIONYIELD"][
+            "property_value"
+        ]
 
     def initialize(self):
         DigitizerBase.initialize(self)
@@ -817,11 +861,14 @@ class DigitizerOpticalGenerativeActor(
         cpp_actor.fOutputEkine = list(Ekine)
         cpp_actor.fOutputTime = list(Time)
 
-    def _resolve_bundle_generator(self):
-        # generator is a string/Path to a generative model bundle: load it and
-        # auto-configure/validate local_axes_order and local_position_offset
-        # against the bundle's manifest (docs/generative_bundle_contract.md).
-        bundle = GenerativeModelBundle(self.user_info.generator)
+    def _resolve_bundle_config(self):
+        # generator is a string/Path to a generative model bundle: read its
+        # manifest and auto-configure/validate local_axes_order and
+        # local_position_offset against it (docs/generative_bundle_contract.md).
+        # The model is not deserialized yet, that happens in
+        # StartSimulationAction, so this stays cheap enough for the
+        # configuration phase.
+        bundle = GenerativeModelBundle(self.user_info.generator, defer_model_load=True)
         expected_axes_order = bundle.expected_local_axes_order()
         expected_offset = bundle.expected_local_position_offset()
 
@@ -866,30 +913,14 @@ class DigitizerOpticalGenerativeActor(
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
-        if self.user_info.generator is None:
-            fatal(
-                f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
-                f"'generator' object implementing "
-                f"generate_batch(x, y, z, time, n_photons)."
-            )
-        if isinstance(self.user_info.generator, (str, Path)):
-            self._resolve_bundle_generator()
-        # read scintillation yield from the optical properties XML for the
-        # material of the attached volume
-        volume = self.simulation.volume_manager.get_volume(self.attached_to)
-        material_name = volume.material
-        props = load_optical_properties_from_xml(
-            self.user_info.optical_properties_file, material_name
-        )
-        if props is None or "SCINTILLATIONYIELD" not in props["constant_properties"]:
-            fatal(
-                f"DigitizerOpticalGenerativeActor '{self.name}': could not find "
-                f"SCINTILLATIONYIELD for material '{material_name}' in "
-                f"{self.user_info.optical_properties_file}."
-            )
-        self.fScintillationYield = props["constant_properties"]["SCINTILLATIONYIELD"][
-            "property_value"
-        ]
+        # Configuration was already resolved and validated in
+        # resolve_and_validate_config; only runtime setup happens here.
+        if self._scintillation_yield is None:
+            self.resolve_and_validate_config()
+        # Deserialize the model now (GPU session, torch/onnxruntime import).
+        if isinstance(self.user_info.generator, GenerativeModelBundle):
+            self.user_info.generator.load_model()
+        self.fScintillationYield = self._scintillation_yield
         self.SetGeneratorFunction(self._call_generator)
         g4.GateDigitizerOpticalGenerativeActor.StartSimulationAction(self)
 

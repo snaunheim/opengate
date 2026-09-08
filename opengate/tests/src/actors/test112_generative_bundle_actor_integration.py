@@ -44,13 +44,14 @@ if __name__ == "__main__":
         print(f"OK: actor with a bundle-path generator produced {n_rows} rows")
 
     # --- actor integration: contradicting local_axes_order fails loudly -
-    # (checked directly against the actor's bundle-resolution step, since a
-    # GATE SimulationEngine can only run once per process)
+    # (checked against the actor's configuration phase, since a GATE
+    # SimulationEngine can only run once per process; this is also the phase
+    # in which a real run would reject the contradiction, before Geant4 starts)
     sim2, _, _ = create_simulation(paths, generator=str(bundle_dir_actor))
     og2 = sim2.actor_manager.get_actor("SyntheticPhotons")
     og2.local_axes_order = [1, 2, 0]  # contradicts the bundle's identity manifest
     try:
-        og2._resolve_bundle_generator()
+        og2.resolve_and_validate_config()
         print("FAIL: expected an exception for a contradicting local_axes_order")
         is_ok = False
     except Exception as e:

@@ -22,18 +22,33 @@ class GenerativeModelBundle:
     or of opengate.contrib.optical.compose_event.
 
     All model loading (reading manifest.json, importing torch/onnxruntime,
-    deserializing the model file) happens once, here, in __init__. Nothing
-    heavy is done in generate_batch beyond the forward pass itself.
+    deserializing the model file) happens once, here, in __init__ - or, with
+    defer_model_load=True, the manifest is validated in __init__ and the model
+    is deserialized later by load_model(). Either way, nothing heavy is done in
+    generate_batch beyond the forward pass itself.
     """
 
-    def __init__(self, bundle_path):
+    def __init__(self, bundle_path, defer_model_load=False):
+        """
+        With defer_model_load=True, the manifest is read and validated but the
+        model itself is not deserialized, so no torch/onnxruntime import and no
+        GPU session happens yet. Call load_model() before generate_batch().
+        This lets a caller validate a bundle's configuration early (e.g. in an
+        actor's resolve_and_validate_config) and pay the loading cost only when
+        the simulation actually starts.
+        """
         self.bundle_path = Path(bundle_path)
         self._zip = None
         self.manifest = self._load_manifest()
         self._validate_manifest()
         self.format = self.manifest["format"]
         self.coordinates = self.manifest["coordinates"]
-        self._model = self._load_model()
+        self._model = None if defer_model_load else self._load_model()
+
+    def load_model(self):
+        """Deserialize the model if it was not loaded in __init__. Idempotent."""
+        if self._model is None:
+            self._model = self._load_model()
 
     def close(self):
         if self._zip is not None:
@@ -222,8 +237,14 @@ class GenerativeModelBundle:
         """
         Implements the frozen generator contract: see
         docs/generative_bundle_contract.md. Only the forward pass happens
-        here; loading already happened in __init__.
+        here; loading already happened in __init__ or in load_model().
         """
+        if self._model is None:
+            fatal(
+                f"Generative model bundle '{self.bundle_path}' was created with "
+                f"defer_model_load=True and its model has not been loaded yet. "
+                f"Call load_model() before generate_batch()."
+            )
         if self.format == "torchscript" or self.format == "aotinductor":
             return self._generate_batch_torch(x, y, z, time, n_photons)
         if self.format == "onnx":
