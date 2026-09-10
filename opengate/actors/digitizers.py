@@ -10,7 +10,12 @@ from ..exception import fatal
 from ..definitions import fwhm_to_sigma
 from ..utility import g4_units
 from ..physics import load_optical_properties_from_xml
-from ..contrib.optical.generative_bundle import GenerativeModelBundle
+from ..contrib.optical.generative_bundle import (
+    DERIVED_FROM_HIT,
+    DERIVED_WORLD_FROM_MODULE,
+    GenerativeModelBundle,
+    validate_outputs,
+)
 from ..image import (
     align_image_with_physical_volume,
     update_image_py_to_cpp,
@@ -682,91 +687,76 @@ class DigitizerDeadTimeActor(DigitizerWithRootOutput, g4.GateDigitizerDeadTimeAc
         DigitizerBase.EndSimulationAction(self)
 
 
+# How a derivation reaches C++, which cannot be given the name. Must stay in
+# step with the codes GateDigitizerOpticalGenerativeActor.h documents.
+_DERIVATION_CODES = {
+    None: 0,
+    DERIVED_WORLD_FROM_MODULE: 1,
+    DERIVED_FROM_HIT: 2,
+}
+
+
 class DigitizerOpticalGenerativeActor(
     DigitizerWithRootOutput, g4.GateDigitizerOpticalGenerativeActor
 ):
     """
-    For every input digi (one energy-deposition step, e.g. from a
-    DigitizerHitsCollectionActor with no G4OpticalPhysics involved), calls a
-    pluggable Python generative model to synthesize N optical-photon-like
-    records (X, Y, dX, dY, dZ, Ekine, Time), instead of tracking optical
-    photons with Geant4. This lets a model such as OptiGAN (or any other
-    model implementing the same 'generate' interface) bridge the optical
-    response live, inside a standard system simulation.
+    Actor replaces step-wise optical photon tracking with a pluggable generative model (e.g., UC Davis' OptiGAN) that can synthesize optical photon-like
+    records in much shorter time. A GPU is in principle not required but highly recommended in order to see a performance gain.
+    The model is conditioned on the spatial coordinates (in the module-local frame) where a hit is recored within a module.
+    Which quantities the model produces is declared in a bundle manifest's 'outputs' list (schema_version 2, see documentation).
 
     The generator can be either:
-      - an object with a method
-        generate_batch(x, y, z, time, n_photons) -> tuple of 7 arrays
-            (X, Y, dX, dY, dZ, Ekine, Time), each of length n_photons
-      - a string/Path to a generative model bundle directory or zip (see
-        docs/generative_bundle_contract.md and
-        opengate.contrib.optical.generative_bundle.GenerativeModelBundle),
-        in which case local_axes_order and local_position_offset are
-        auto-configured from the bundle's manifest.
-    The method is called once per hit (not once per photon), so a GPU
-    model can process the full batch in a single forward pass.
+      - an object with a method generate_batch(x, y, z, time, n_photons) -> tuple of arrays, one per
+        declared model column, all of the same length. That length may be smaller than n_photons, since
+        photons that never reach the sensor produce no row. Such a generator has no manifest, so 'outputs'
+        must declare its schema.
+      - a string/Path to a generative model bundle directory or zip, in which case outputs, local_axes_order and local_position_offset are
+        all auto-configured from the bundle's manifest.
 
-    Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocal
-    and GlobalTime attributes (e.g. the output of a
-    DigitizerHitsCollectionActor, used directly, without an Adder in
-    between: each input row is treated as one energy-deposition point).
-    Output: a digi collection with X, Y, dX, dY, dZ, Ekine, Time and
-    SourceHitIndex (the index of the input row that produced each photon).
+
+    Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
+    DigitizerHitsCollectionActor
+    Output: a digi collection with the declared attributes plus SourceHitIndex (the index of the input row that produced each photon).
     """
 
     user_info_defaults = {
         "input_digi_collection": (
             "Hits",
             {
-                "doc": "Digi collection to be used as input (one row per "
-                "energy-deposition step, e.g. the output of a "
-                "DigitizerHitsCollectionActor).",
+                "doc": "Digi collection to be used as input (one row per energy-deposition step, e.g. the output of a DigitizerHitsCollectionActor).",
             },
         ),
         "generator": (
             None,
             {
-                "doc": "Object implementing generate_batch(x, y, z, time, n_photons) "
-                "-> tuple of 7 arrays (X, Y, dX, dY, dZ, Ekine, Time) each of "
-                "length n_photons. Called once per hit for efficient GPU batching. "
-                "Alternatively, a string/Path to a generative model bundle "
-                "directory or zip (see docs/generative_bundle_contract.md); "
-                "local_axes_order and local_position_offset are then "
-                "auto-configured from the bundle's manifest.",
+                "doc": "Object/string/Path to a generative model bundle, that has generate_batch(x, y, z, time, n_photons) "
             },
         ),
-        "local_position_offset": (
-            [0.0, 0.0, 0.0],
+        "outputs": (
+            None,
             {
-                "doc": "Offset (dx, dy, dz) in mm added to the crystal-local "
-                "PostPositionLocal coordinates before they are passed to the "
-                "generator. Use this to match the coordinate convention the "
-                "model was trained on. For example, if the model expects z=0 "
-                "at the sensor face and z=crystal_depth at the entry face of a "
-                "20 mm crystal, set local_position_offset=[0, 0, 10] to shift "
-                "from the default centered frame (z in [-10, +10] mm) to the "
-                "sensor-origin frame (z in [0, 20] mm).",
+                "doc": "The output schema: a list of dicts declaring which GATE digi attribute each model column fills, in the order the model returns them, e.g. {'attribute': 'KineticEnergy', 'unit': 'eV'} or {'attribute': 'Direction', 'component': 'x', 'unit': '1'}. ",
             },
         ),
         "local_axes_order": (
             [0, 1, 2],
             {
-                "doc": "Permutation of [0,1,2] applied to the crystal-local "
-                "coordinates before they are passed to the generator. "
-                "PostPositionLocal gives (x=radial/depth, y=transverse, z=axial). "
-                "If the model expects (transverse, axial, depth) use [1, 2, 0]. "
-                "Applied before local_position_offset.",
+                "doc": "Permutation of [0,1,2] applied to the module-local axes before they are passed to the generator.",
             },
         ),
+        "local_position_offset": (
+            [0.0, 0.0, 0.0],
+            {
+                "doc": "Offset (dx, dy, dz) in mm added to the module-local PostPositionLocalModule coordinates before they are passed to the generator.",
+            },
+        ),
+
         "optical_properties_file": (
             Path(os.path.dirname(os.path.dirname(__file__)))
             / "data"
             / "OpticalProperties.xml",
             {
-                "doc": "Path to the XML file containing optical material properties. "
-                "The scintillation yield (SCINTILLATIONYIELD, in photons/MeV) is "
-                "read automatically from this file for the material of the attached "
-                "volume. Defaults to opengate/data/OpticalProperties.xml.",
+                "doc": "Path to the XML file containing optical material properties. Defaults to opengate/data/OpticalProperties.xml.",
             },
         ),
         "skip_attributes": (
@@ -778,16 +768,28 @@ class DigitizerOpticalGenerativeActor(
         "clear_every": (
             1e5,
             {
-                "doc": "The memory consumed by the actor is minimized after "
-                "having processed the specified amount of digis.",
+                "doc": "The memory consumed by the actor is minimized after having processed the specified amount of digis.",
             },
         ),
+
+        "_output_attribute_names": ([], {"doc": "Internal, see 'outputs'."}),
+        "_output_components": ([], {"doc": "Internal, see 'outputs'."}),
+        "_output_column_indices": ([], {"doc": "Internal, see 'outputs'."}),
+        "_output_constants": ([], {"doc": "Internal, see 'outputs'."}),
+        "_output_relative_to_hit": ([], {"doc": "Internal, see 'outputs'."}),
+        "_output_derived": ([], {"doc": "Internal, see 'outputs'."}),
     }
 
     def __init__(self, *args, **kwargs):
         # Resolved in resolve_and_validate_config, consumed in
         # StartSimulationAction; None means "not resolved yet".
         self._scintillation_yield = None
+        # Per model column, applied to it before it is handed to C++
+        self._column_factors = None
+        self._column_offsets = None
+        # largest n_photons a single generator call may be given, from the
+        # bundle manifest; None means the model has no limit
+        self._max_batch = None
         DigitizerBase.__init__(self, *args, **kwargs)
         self.__initcpp__()
 
@@ -809,16 +811,53 @@ class DigitizerOpticalGenerativeActor(
             )
 
         # For a bundle path, read and validate the manifest and reconcile the
-        # coordinate convention now. The model itself is deliberately NOT
-        # deserialized here: that allocates GPU/session resources, which
-        # belongs in the runtime phase (see StartSimulationAction).
+        # coordinate convention now. The model itself is NOT deserialized here
         if isinstance(self.user_info.generator, (str, Path)):
             self._resolve_bundle_config()
+
+        # Resolve the output schema and hand it to C++ as flat vectors.
+        self._resolve_output_schema()
 
         # Resolve the scintillation yield from the optical properties XML for
         # the material of the attached volume. The volume manager is resolved
         # before the actor manager, so the material is available here.
         self._resolve_scintillation_yield()
+
+    def _resolve_output_schema(self):
+        # Resolve the output schema
+        generator = self.user_info.generator
+        if isinstance(generator, GenerativeModelBundle):
+            outputs = generator.resolved_outputs()
+            # only a bundle declares a batch size limit; a plain generator
+            # object is always called with the whole hit at once
+            self._max_batch = generator.max_batch
+        elif self.user_info.outputs is None:
+            fatal(
+                f"Set 'outputs' to declare which GATE attribute each column returns."
+            )
+        else:
+            outputs = validate_outputs(
+                self.user_info.outputs,
+                f"DigitizerOpticalGenerativeActor '{self.name}'",
+            )
+
+        self.user_info._output_attribute_names = [e["attribute"] for e in outputs]
+        self.user_info._output_components = [e["component"] or "" for e in outputs]
+        self.user_info._output_column_indices = [e["column_index"] for e in outputs]
+        self.user_info._output_constants = [e["constant"] for e in outputs]
+        self.user_info._output_relative_to_hit = [
+            1 if e["relative_to_hit"] else 0 for e in outputs
+        ]
+        self.user_info._output_derived = [
+            _DERIVATION_CODES[e.get("derived")] for e in outputs
+        ]
+
+        # Unit factor and offset per model column, in column order, so that
+        # _call_generator can apply them as one vectorized op per column.
+        columns = [e for e in outputs if e["column_index"] >= 0]
+        columns.sort(key=lambda e: e["column_index"])
+        self._column_factors = [e["factor"] for e in columns]
+        self._column_offsets = [e["offset"] for e in columns]
 
     def _resolve_scintillation_yield(self):
         volume = self.simulation.volume_manager.get_volume(self.attached_to)
@@ -842,32 +881,59 @@ class DigitizerOpticalGenerativeActor(
         self.InitializeCpp()
 
     def _call_generator(self, cpp_actor):
-        # called once per hit by C++; writes N photon records as vectors
+        # called once per hit by C++; writes N photon records as columns
         coords = [cpp_actor.fInputX, cpp_actor.fInputY, cpp_actor.fInputZ]
         ax = self.user_info.local_axes_order
         off = self.user_info.local_position_offset
-        X, Y, dX, dY, dZ, Ekine, Time = self.user_info.generator.generate_batch(
-            coords[ax[0]] + off[0],
-            coords[ax[1]] + off[1],
-            coords[ax[2]] + off[2],
-            cpp_actor.fInputTime,
-            cpp_actor.fInputN,
-        )
-        cpp_actor.fOutputX = list(X)
-        cpp_actor.fOutputY = list(Y)
-        cpp_actor.fOutputDX = list(dX)
-        cpp_actor.fOutputDY = list(dY)
-        cpp_actor.fOutputDZ = list(dZ)
-        cpp_actor.fOutputEkine = list(Ekine)
-        cpp_actor.fOutputTime = list(Time)
+        x = coords[ax[0]] + off[0]
+        y = coords[ax[1]] + off[1]
+        z = coords[ax[2]] + off[2]
+        time = cpp_actor.fInputTime
+        n_photons = cpp_actor.fInputN
+
+        generate_batch = self.user_info.generator.generate_batch
+        if self._max_batch is None or n_photons <= self._max_batch:
+            columns = generate_batch(x, y, z, time, n_photons)
+        else:
+            # The model was validated only up to max_batch, typically because a
+            # larger call does not fit in GPU memory. Split the hit into full
+            # batches plus whatever is left, and join the pieces back together.
+            # Each call costs the model's fixed overhead again, so this is only
+            # done when the manifest asks for it.
+            parts = []
+            remaining = n_photons
+            while remaining > 0:
+                n = min(remaining, self._max_batch)
+                parts.append(generate_batch(x, y, z, time, n))
+                remaining -= n
+            if len({len(p) for p in parts}) != 1:
+                fatal(
+                    f"DigitizerOpticalGenerativeActor '{self.name}': the "
+                    f"generator returned a different number of columns for "
+                    f"different batches of the same hit."
+                )
+            # a batch may return fewer rows than asked for, so the pieces need
+            # not be the same length; concatenating them is still correct
+            columns = [np.concatenate(pieces) for pieces in zip(*parts)]
+
+        # Catch a column mismatch
+        if len(columns) != len(self._column_factors):
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': the generator "
+                f"returned {len(columns)} columns, but the declared output "
+                f"schema expects {len(self._column_factors)}. Check the "
+                f"'outputs' list against what the model returns."
+            )
+
+        cpp_actor.fOutputColumns = [
+            np.asarray(column, dtype=np.float64) * factor + offset
+            for column, factor, offset in zip(
+                columns, self._column_factors, self._column_offsets
+            )
+        ]
 
     def _resolve_bundle_config(self):
-        # generator is a string/Path to a generative model bundle: read its
-        # manifest and auto-configure/validate local_axes_order and
-        # local_position_offset against it (docs/generative_bundle_contract.md).
-        # The model is not deserialized yet, that happens in
-        # StartSimulationAction, so this stays cheap enough for the
-        # configuration phase.
+        # read manifest, auto-configure/validate local_axes_order and local_position_offset against it
         bundle = GenerativeModelBundle(self.user_info.generator, defer_model_load=True)
         expected_axes_order = bundle.expected_local_axes_order()
         expected_offset = bundle.expected_local_position_offset()
@@ -897,12 +963,11 @@ class DigitizerOpticalGenerativeActor(
                     f"DigitizerOpticalGenerativeActor '{self.name}': "
                     f"local_position_offset={self.user_info.local_position_offset} "
                     f"was set explicitly, but the generative model bundle "
-                    f"'{self.user_info.generator}' declares coordinates.origin="
-                    f"{bundle.coordinates.get('origin')!r} with "
-                    f"training.crystal_size_mm="
-                    f"{bundle.manifest['training']['crystal_size_mm']}, which "
-                    f"implies local_position_offset={expected_offset}. Remove "
-                    f"the explicit local_position_offset to let it be "
+                    f"'{self.user_info.generator}' declares coordinates.offset="
+                    f"{bundle.coordinates.get('offset')} in "
+                    f"{bundle.coordinates.get('unit')!r}, which implies "
+                    f"local_position_offset={expected_offset}. Remove the "
+                    f"explicit local_position_offset to let it be "
                     f"auto-configured from the bundle, or set it to the "
                     f"expected value."
                 )
@@ -913,8 +978,7 @@ class DigitizerOpticalGenerativeActor(
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
-        # Configuration was already resolved and validated in
-        # resolve_and_validate_config; only runtime setup happens here.
+
         if self._scintillation_yield is None:
             self.resolve_and_validate_config()
         # Deserialize the model now (GPU session, torch/onnxruntime import).
