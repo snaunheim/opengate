@@ -36,19 +36,8 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
       .def_readwrite("fInputN",
                      &GateDigitizerOpticalGenerativeActor::fInputN)
 
-      // vector outputs filled by Python — one entry per photon, length fInputN
-      .def_readwrite("fOutputX",
-                     &GateDigitizerOpticalGenerativeActor::fOutputX)
-      .def_readwrite("fOutputY",
-                     &GateDigitizerOpticalGenerativeActor::fOutputY)
-      .def_readwrite("fOutputDX",
-                     &GateDigitizerOpticalGenerativeActor::fOutputDX)
-      .def_readwrite("fOutputDY",
-                     &GateDigitizerOpticalGenerativeActor::fOutputDY)
-      .def_readwrite("fOutputDZ",
-                     &GateDigitizerOpticalGenerativeActor::fOutputDZ)
-      .def_readwrite("fOutputEkine",
-                     &GateDigitizerOpticalGenerativeActor::fOutputEkine)
-      .def_readwrite("fOutputTime",
-                     &GateDigitizerOpticalGenerativeActor::fOutputTime);
+      // outputs filled by Python — one column per declared model output, each
+      // of length fInputN, in the order of the manifest's 'outputs' list
+      .def_readwrite("fOutputColumns",
+                     &GateDigitizerOpticalGenerativeActor::fOutputColumns);
 }
