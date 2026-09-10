@@ -757,6 +757,7 @@ class DigitizerOpticalGenerativeActor(
             / "OpticalProperties.xml",
             {
                 "doc": "Path to the XML file containing optical material properties. Defaults to opengate/data/OpticalProperties.xml.",
+                "is_input_file": True,
             },
         ),
         "skip_attributes": (
