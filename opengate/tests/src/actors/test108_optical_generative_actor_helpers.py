@@ -59,7 +59,7 @@ def check_output(output_root_path, hits_root_path):
     """
     Read the actor output and verify:
       1. Output has more rows than input hits (Poisson yield > 0 on average)
-      2. The GlobalTime column is linear (not log-domain): all values > 0
+      2. The GlobalTime column is positive throughout
       3. SourceHitIndex never decreases within a contiguous block
          (photons from the same hit share the same index value)
     Returns True if all checks pass, False otherwise.
@@ -101,10 +101,7 @@ def check_output(output_root_path, hits_root_path):
         )
 
     if np.any(time <= 0):
-        print(
-            "FAIL: GlobalTime column contains non-positive values "
-            "(still in log domain?)"
-        )
+        print("FAIL: GlobalTime column contains non-positive values")
         ok = False
     else:
         print(f"OK: all GlobalTime values are positive (min={time.min():.3e})")
