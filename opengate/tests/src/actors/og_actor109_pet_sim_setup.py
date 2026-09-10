@@ -7,7 +7,10 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
-from test108_optical_generative_actor_helpers import FixedNMockGenerator
+from test108_optical_generative_actor_helpers import (
+    FixedNMockGenerator,
+    MOCK_GENERATOR_OUTPUTS,
+)
 
 
 def create_simulation(paths, generator=None, n_modules=20, add_optical_generator=True):
@@ -137,6 +140,8 @@ def create_simulation(paths, generator=None, n_modules=20, add_optical_generator
             # Remap GATE module frame axes to the mock generator's convention:
             # GATE: (x=depth, y=transverse, z=axial) → model: (transverse, axial, depth)
             og.local_axes_order = [1, 2, 0]
+            # a bundle carries its schema in the manifest, a plain object does not
+            og.outputs = MOCK_GENERATOR_OUTPUTS
 
     sim.run_timing_intervals = [[0, 0.05 * sec]]
 

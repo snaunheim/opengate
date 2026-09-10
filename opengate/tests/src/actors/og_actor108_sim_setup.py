@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import opengate as gate
-from test108_optical_generative_actor_helpers import FixedNMockGenerator
+from test108_optical_generative_actor_helpers import (
+    FixedNMockGenerator,
+    MOCK_GENERATOR_OUTPUTS,
+)
 
 
 def create_simulation(paths, generator=None):
@@ -24,7 +27,15 @@ def create_simulation(paths, generator=None):
     sim.world.size = [1 * m, 1 * m, 1 * m]
     sim.world.material = "G4_AIR"
 
+    # A monolith: the module coincides with the single crystal. The actor
+    # exchanges positions in the array-local (module) frame, so the crystal
+    # needs a module around it even when there is only one of them.
+    module = sim.add_volume("Box", "module")
+    module.size = [3 * mm, 3 * mm, 20 * mm]
+    module.material = "G4_AIR"
+
     crystal = sim.add_volume("Box", "crystal")
+    crystal.mother = module.name
     crystal.size = [3 * mm, 3 * mm, 20 * mm]
     crystal.material = "BGO"
 
@@ -45,12 +56,16 @@ def create_simulation(paths, generator=None):
     hc.attached_to = crystal.name
     hc.output_filename = hits_filename
     hc.attributes = [
-        "PostPositionLocal",
+        "PostPositionLocalModule",
         "TotalEnergyDeposit",
         "GlobalTime",
+        # needed only by a manifest declaring a derived world-frame output,
+        # which needs the module transform to invert
+        "PreStepUniqueVolumeID",
     ]
 
-    if generator is None:
+    use_mock_generator = generator is None
+    if use_mock_generator:
         generator = FixedNMockGenerator()
 
     og = sim.add_actor("DigitizerOpticalGenerativeActor", "SyntheticPhotons")
@@ -58,6 +73,9 @@ def create_simulation(paths, generator=None):
     og.input_digi_collection = hc.name
     og.generator = generator
     og.output_filename = output_filename
+    if use_mock_generator:
+        # a bundle carries its schema in the manifest, a plain object does not
+        og.outputs = MOCK_GENERATOR_OUTPUTS
 
     sim.run_timing_intervals = [[0, 0.1 * sec]]
 
