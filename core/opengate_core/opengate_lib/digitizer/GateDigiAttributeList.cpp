@@ -254,11 +254,6 @@ void GateDigiAttributeManager::InitializeAllDigiAttributes() {
       });
   DefineDigiAttribute(
       // Post-step position in the frame of the parent (module) volume.
-      // Coordinates are in GATE's module frame: X=depth(radial), Y=transverse, Z=axial.
-      // This axis order may differ from your detector/model convention — use
-      // DigitizerOpticalGenerativeActor::local_axes_order to remap if needed.
-      // Uses the PreStepPoint touchable to ensure a stable navigation history
-      // depth even for boundary-crossing steps.
       "PostPositionLocalModule", '3', FILLF {
         const auto *theTouchable = step->GetPreStepPoint()->GetTouchable();
         auto pos = step->GetPostStepPoint()->GetPosition();
