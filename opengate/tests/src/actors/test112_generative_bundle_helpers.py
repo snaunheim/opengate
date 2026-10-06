@@ -44,6 +44,17 @@ def make_torchscript_bundle(bundle_dir):
     model_file = "model.pt"
     model.save(str(bundle_dir / model_file))
 
+    manifest = _manifest(model_file)
+    # this model takes one position per call, so the actor calls it once per hit
+    manifest["batch"] = {"max_batch": None, "input_mode": "scalar"}
+    with open(bundle_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f)
+
+    return manifest
+
+
+def _manifest(model_file):
+    """The manifest both bundles share, except for the 'batch' section."""
     outputs = [
         {"attribute": "PostPositionLocalModule", "component": "y", "unit": "mm"},
         {"attribute": "PostPositionLocalModule", "component": "z", "unit": "mm"},
@@ -69,8 +80,8 @@ def make_torchscript_bundle(bundle_dir):
         {"attribute": "PostPosition", "derived": "world_from_module"},
     ]
 
-    manifest = {
-        "schema_version": 2,
+    return {
+        "schema_version": 3,
         "format": "torchscript",
         "model_file": model_file,
         "outputs": outputs,
@@ -80,7 +91,56 @@ def make_torchscript_bundle(bundle_dir):
             "unit": "mm",
         },
         "training": {"crystal_size_mm": [10.0, 3.0, 3.0], "material": "BGO"},
-        "batch": {"max_batch": None},
+    }
+
+
+def make_vector_torchscript_bundle(bundle_dir, target_batch=4096):
+    """
+    Same model and same output schema as make_torchscript_bundle, but with
+    per-photon conditioning, so the actor pools hits into one call. Both
+    bundles produce the same photons for the same hits, which is what
+    test112 compares.
+
+    Only called if TORCH_AVAILABLE is True.
+    """
+    import torch
+    import torch.nn as nn
+    from typing import Tuple
+
+    class TinyVectorGenerator(nn.Module):
+        def forward(
+            self,
+            x: torch.Tensor,
+            y: torch.Tensor,
+            z: torch.Tensor,
+            time: torch.Tensor,
+        ) -> Tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+        ]:
+            # the conditioning already has one entry per photon, so the
+            # columns are just passed through instead of being broadcast
+            n = x.shape[0]
+            pos_t = x
+            pos_a = y
+            d_depth = torch.ones(n)
+            ekine = torch.full((n,), 3.0)  # eV, declared as such
+            delay = torch.ones(n)  # 1 ns after the hit
+            return pos_t, pos_a, d_depth, ekine, delay
+
+    model = torch.jit.script(TinyVectorGenerator())
+    model_file = "model.pt"
+    model.save(str(bundle_dir / model_file))
+
+    # same schema as the scalar bundle, so the two runs are comparable
+    manifest = _manifest(model_file)
+    manifest["batch"] = {
+        "max_batch": None,
+        "input_mode": "vector",
+        "target_batch": target_batch,
     }
     with open(bundle_dir / "manifest.json", "w") as f:
         json.dump(manifest, f)
