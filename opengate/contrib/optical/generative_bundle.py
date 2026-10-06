@@ -7,8 +7,21 @@ import numpy as np
 from opengate.exception import fatal, warning
 from opengate.utility import g4_units
 
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 3
 SUPPORTED_FORMATS = ("torchscript", "onnx", "aotinductor")
+
+# How the model takes its conditioning. 'scalar' is the version 2 signature:
+# one position per call plus a carrier array whose length sets the batch size.
+# 'vector' takes one conditioning entry per photon, so a single call can cover
+# photons from several hits, which is what lets the actor fill the batches.
+INPUT_MODE_SCALAR = "scalar"
+INPUT_MODE_VECTOR = "vector"
+SUPPORTED_INPUT_MODES = (INPUT_MODE_SCALAR, INPUT_MODE_VECTOR)
+
+# used in vector mode when the manifest does not state a target_batch.
+# measured on an RTX 5080: the cost per photon stops dropping above roughly
+# this many photons per call, a typical hit alone reaches half of it.
+DEFAULT_TARGET_BATCH = 50000
 
 # GATE's module-local frame (PostPositionLocalModule) is
 # (x=depth/radial, y=transverse, z=axial); see og_actor109_pet_sim_setup.py.
@@ -181,6 +194,41 @@ class GenerativeModelBundle:
                 f"batch.max_batch={max_batch!r}; expected a positive whole "
                 f"number, or null when the model has no batch size limit."
             )
+        input_mode = self.manifest["batch"].get("input_mode")
+        if input_mode not in SUPPORTED_INPUT_MODES:
+            fatal(
+                f"Generative model bundle '{self.bundle_path}' manifest has "
+                f"batch.input_mode={input_mode!r}, which is not one of "
+                f"{SUPPORTED_INPUT_MODES}."
+            )
+        target_batch = self.manifest["batch"].get("target_batch")
+        if target_batch is not None:
+            if (
+                not isinstance(target_batch, int)
+                or isinstance(target_batch, bool)
+                or target_batch < 1
+            ):
+                fatal(
+                    f"Generative model bundle '{self.bundle_path}' manifest has "
+                    f"batch.target_batch={target_batch!r}; expected a positive "
+                    f"whole number, or null to let the actor decide."
+                )
+            if input_mode != INPUT_MODE_VECTOR:
+                fatal(
+                    f"Generative model bundle '{self.bundle_path}' manifest "
+                    f"declares batch.target_batch={target_batch}, but "
+                    f"batch.input_mode={input_mode!r}. Pooling photons into "
+                    f"batches of that size needs one conditioning entry per "
+                    f"photon, so it only applies to "
+                    f"input_mode={INPUT_MODE_VECTOR!r}."
+                )
+            if max_batch is not None and target_batch > max_batch:
+                fatal(
+                    f"Generative model bundle '{self.bundle_path}' manifest has "
+                    f"batch.target_batch={target_batch} above "
+                    f"batch.max_batch={max_batch}. The pooled batch size "
+                    f"cannot exceed what the model accepts."
+                )
 
     @property
     def max_batch(self):
@@ -190,6 +238,23 @@ class GenerativeModelBundle:
         across several calls, see generate_batch.
         """
         return self.manifest["batch"].get("max_batch")
+
+    @property
+    def input_mode(self):
+        """
+        'scalar' - one position per call, the batch size carried separately.
+        'vector' - one conditioning entry per photon, so one call can cover
+        photons from several hits.
+        """
+        return self.manifest["batch"]["input_mode"]
+
+    @property
+    def target_batch(self):
+        """
+        The batch size the actor aims for when pooling photons, or None when
+        the manifest does not state one. Only meaningful in 'vector' mode.
+        """
+        return self.manifest["batch"].get("target_batch")
 
     # -- model loading --------------------------------------------------
 
@@ -332,22 +397,62 @@ class GenerativeModelBundle:
 
     # -- inference --------------------------------------------------------
 
+    def _require_model(self, what):
+        if self._model is None:
+            fatal(
+                f"Generative model bundle '{self.bundle_path}' was created with "
+                f"defer_model_load=True and its model has not been loaded yet. "
+                f"Call load_model() before {what}()."
+            )
+
     def generate_batch(self, x, y, z, time, n_photons):
         """
         Returns one 1-D array per declared model column, in manifest order.
         All of them share one length, which may be smaller than n_photons if
         the model drops photons that never reach the sensor.
         """
-        if self._model is None:
+        self._require_model("generate_batch")
+        if self.input_mode != INPUT_MODE_SCALAR:
             fatal(
-                f"Generative model bundle '{self.bundle_path}' was created with "
-                f"defer_model_load=True and its model has not been loaded yet. "
-                f"Call load_model() before generate_batch()."
+                f"Generative model bundle '{self.bundle_path}' declares "
+                f"batch.input_mode={self.input_mode!r}; generate_batch() takes "
+                f"one position per call and only applies to "
+                f"input_mode={INPUT_MODE_SCALAR!r}. Use generate_pooled()."
             )
         if self.format == "torchscript" or self.format == "aotinductor":
             return self._generate_batch_torch(x, y, z, time, n_photons)
         if self.format == "onnx":
             return self._generate_batch_onnx(x, y, z, time, n_photons)
+        fatal(f"Unknown generative model bundle format '{self.format}'.")
+
+    def generate_pooled(self, x, y, z, time):
+        """
+        The vector-mode counterpart of generate_batch: every argument is a 1-D
+        array with one entry per photon, so one call can carry photons from
+        several hits. All four must have the same length.
+
+        Returns one 1-D array per declared model column, in manifest order,
+        with entry i belonging to input entry i.
+        """
+        self._require_model("generate_pooled")
+        if self.input_mode != INPUT_MODE_VECTOR:
+            fatal(
+                f"Generative model bundle '{self.bundle_path}' declares "
+                f"batch.input_mode={self.input_mode!r}; generate_pooled() needs "
+                f"one conditioning entry per photon and only applies to "
+                f"input_mode={INPUT_MODE_VECTOR!r}. Use generate_batch()."
+            )
+        lengths = {len(x), len(y), len(z), len(time)}
+        if len(lengths) != 1:
+            fatal(
+                f"Generative model bundle '{self.bundle_path}': generate_pooled "
+                f"was given conditioning arrays of differing lengths "
+                f"({sorted(lengths)}). All four must have one entry per photon."
+            )
+        if self.format == "torchscript" or self.format == "aotinductor":
+            return self._generate_pooled_torch(x, y, z, time)
+        if self.format == "onnx":
+            return self._generate_pooled_onnx(x, y, z, time)
         fatal(f"Unknown generative model bundle format '{self.format}'.")
 
     def _generate_batch_torch(self, x, y, z, time, n_photons):
@@ -366,6 +471,30 @@ class GenerativeModelBundle:
             "z": np.array(z, dtype=np.float32),
             "time": np.array(time, dtype=np.float32),
             "n_photons_carrier": np.zeros(n_photons, dtype=np.int64),
+        }
+        outputs = self._model.run(None, feeds)
+        return tuple(np.asarray(o, dtype=np.float64) for o in outputs)
+
+    def _generate_pooled_torch(self, x, y, z, time):
+        import torch
+
+        with torch.no_grad():
+            output = self._model(
+                torch.as_tensor(x, dtype=torch.float32),
+                torch.as_tensor(y, dtype=torch.float32),
+                torch.as_tensor(z, dtype=torch.float32),
+                torch.as_tensor(time, dtype=torch.float32),
+            )
+        return tuple(np.asarray(t.cpu().numpy(), dtype=np.float64) for t in output)
+
+    def _generate_pooled_onnx(self, x, y, z, time):
+        # onnxruntime rejects anything but float32 here, and all four arrays
+        # must share one length (checked by the caller).
+        feeds = {
+            "x": np.ascontiguousarray(x, dtype=np.float32),
+            "y": np.ascontiguousarray(y, dtype=np.float32),
+            "z": np.ascontiguousarray(z, dtype=np.float32),
+            "time": np.ascontiguousarray(time, dtype=np.float32),
         }
         outputs = self._model.run(None, feeds)
         return tuple(np.asarray(o, dtype=np.float64) for o in outputs)
