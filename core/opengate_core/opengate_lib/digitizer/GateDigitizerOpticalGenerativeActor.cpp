@@ -33,6 +33,9 @@ void GateDigitizerOpticalGenerativeActor::InitializeUserInfo(
   fOutputRelativeToHit = DictGetVecInt(user_info, "_output_relative_to_hit");
   fOutputDerived = DictGetVecInt(user_info, "_output_derived");
 
+  fTargetBatch = DictGetInt(user_info, "_target_batch");
+  fPooling = fTargetBatch > 0;
+
   const auto n = fOutputAttributeNames.size();
   if (fOutputComponents.size() != n || fOutputColumnIndices.size() != n ||
       fOutputConstants.size() != n || fOutputRelativeToHit.size() != n ||
@@ -121,7 +124,16 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   // Must call this here since we bypass GateVDigitizerWithOutputActor::DigitInitialize
   fOutputDigiCollection->RootInitializeTupleForWorker();
 
-  // Solving the declared scheme. Slots are grouped by attribute, 
+  // the attributes belong to the shared collection, so the schema is resolved
+  // by the first worker and only read afterwards
+  std::lock_guard<std::mutex> guard(fSchemaMutex);
+  if (fSchemaResolved) {
+    SetUpInputIterator();
+    return;
+  }
+  fSchemaResolved = true;
+
+  // Solving the declared scheme. Slots are grouped by attribute,
   // such that the components of a vector are together.
   // EndOfEventAction then just goes through the list and calls Fill3Value/FillDValue
   fOutputTargets.clear();
@@ -191,6 +203,25 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   fOutputSourceHitIndexAttribute =
       fOutputDigiCollection->GetDigiAttribute("SourceHitIndex");
 
+  // every 'I' target reads its value through a slot of its own
+  for (size_t i = 0; i < fFromHitTargets.size(); i++) {
+    auto &target = fFromHitTargets[i];
+    if (target.type == 'I') {
+      target.intSlot = static_cast<int>(i);
+    } else if (target.type != 'U') {
+      std::ostringstream oss;
+      oss << "GateDigitizerOpticalGenerativeActor: the attribute '"
+          << target.attribute->GetDigiAttributeName()
+          << "' is declared as derived from the hit, but its type '"
+          << target.type << "' cannot be copied.";
+      Fatal(oss.str());
+    }
+  }
+
+  SetUpInputIterator();
+}
+
+void GateDigitizerOpticalGenerativeActor::SetUpInputIterator() {
   auto &lr = fThreadLocalVDigitizerData.Get();
   lr.fInputIter = fInputDigiCollection->NewIterator();
   auto &l = fThreadLocalData.Get();
@@ -205,20 +236,10 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   // stores the address of an element.
   l.fromHitInts.assign(fFromHitTargets.size(), nullptr);
   for (size_t i = 0; i < fFromHitTargets.size(); i++) {
-    auto &target = fFromHitTargets[i];
-    const auto name = target.attribute->GetDigiAttributeName();
-    if (target.type == 'U') {
-      // PreStepUniqueVolumeID, already tracked above as the only 'U' case
-    } else if (target.type == 'I') {
-      target.intSlot = static_cast<int>(i);
-      lr.fInputIter.TrackAttribute(name, &l.fromHitInts[i]);
-    } else {
-      std::ostringstream oss;
-      oss << "GateDigitizerOpticalGenerativeActor: the attribute '" << name
-          << "' is declared as derived from the hit, but its type '"
-          << target.type << "' cannot be copied.";
-      Fatal(oss.str());
-    }
+    const auto &target = fFromHitTargets[i];
+    if (target.type == 'I')
+      lr.fInputIter.TrackAttribute(target.attribute->GetDigiAttributeName(),
+                                   &l.fromHitInts[i]);
   }
 }
 
@@ -227,6 +248,8 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
   auto &lr = fThreadLocalVDigitizerData.Get();
   auto &iter = lr.fInputIter;
   auto &l = fThreadLocalData.Get();
+  if (l.threadIndexOffset < 0)
+    l.threadIndexOffset = fNextThreadIndex.fetch_add(1) * fSourceHitIndexStride;
   iter.GoToBegin();
 
   while (!iter.IsAtEnd()) {
@@ -234,109 +257,217 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
       // sample N from Poisson(edep * scintillation_yield)
       const long N = G4Poisson((*l.edep) * fScintillationYield);
 
-      const auto sourceHitIndex = static_cast<double>(l.nHitsProcessed);
+      const auto sourceHitIndex =
+          static_cast<double>(l.threadIndexOffset + l.nHitsProcessed);
       l.nHitsProcessed++;
 
-      if (N > 0) {
+      if (N > 0 && fPooling) {
+        PoolHit(l, N, sourceHitIndex);
+      } else if (N > 0) {
         // set inputs; generator is called once per hit with batch size N
-        fInputX = l.pos->x();
-        fInputY = l.pos->y();
-        fInputZ = l.pos->z();
-        fInputTime = *l.time;
-        fInputN = N;
+        auto &io = GetGeneratorIO();
+        io.x = l.pos->x();
+        io.y = l.pos->y();
+        io.z = l.pos->z();
+        io.time = *l.time;
+        io.n = N;
 
-        fGenerator(this); // fills fOutputColumns, one vector per model column
-
-        // The manifest does not state the number of features the model actually
-        // returns. A mismatch shifts the mapping, therefore stop.
-        if (static_cast<int>(fOutputColumns.size()) != fNumberOfModelColumns) {
-          std::ostringstream oss;
-          oss << "GateDigitizerOpticalGenerativeActor: the generator returned "
-              << fOutputColumns.size() << " columns, but the declared output "
-              << "schema expects " << fNumberOfModelColumns
-              << ". Check the 'outputs' list of the bundle manifest against "
-                 "what the model returns.";
-          Fatal(oss.str());
+        {
+          // the generator is python, so it needs the gil; in MT every worker
+          // calls it for its own hits
+          py::gil_scoped_acquire acquire;
+          fGenerator(this); // fills io.columns, one vector per model column
         }
 
-        // Column length between the features has to be the same, but can be lower than the N
-        // that were requested, because of geometric efficiency etc.
-        const long nRows =
-            fOutputColumns.empty()
-                ? 0
-                : static_cast<long>(fOutputColumns.front().size());
-        for (const auto &column : fOutputColumns) {
-          if (static_cast<long>(column.size()) != nRows) {
-            std::ostringstream oss;
-            oss << "GateDigitizerOpticalGenerativeActor: the generator "
-                << "returned columns of differing lengths (" << nRows << " and "
-                << column.size()
-                << "). Every column must have one entry per photon.";
-            Fatal(oss.str());
-          }
-        }
-        if (nRows > N) {
-          std::ostringstream oss;
-          oss << "GateDigitizerOpticalGenerativeActor: the generator was asked "
-              << "for " << N << " photons but returned " << nRows
-              << " rows. It may return fewer than requested, never more.";
-          Fatal(oss.str());
-        }
+        const long nRows = CheckOutputColumns(N);
 
-        // Transforms module frame back to the world, Resolved once per hit.
-        const G4AffineTransform *worldFromModule = nullptr;
-        if (!fWorldFromModuleAttributes.empty()) {
-          const auto &volumeID = *l.volumeID;
-          const auto depth = volumeID->fTouchable.GetDepth();
-          const auto parentIdx = (depth >= 1) ? (G4int)depth - 1 : 0;
-          worldFromModule = &volumeID->fTouchable.GetTransform(parentIdx);
-        }
+        PooledHit hit;
+        hit.nRequested = N;
+        hit.hitTime = *l.time;
+        hit.sourceHitIndex = sourceHitIndex;
+        if (fNeedsVolumeID)
+          hit.volumeID = *l.volumeID;
+        if (!fWorldFromModuleAttributes.empty())
+          hit.worldFromModule = ResolveWorldFromModule(hit.volumeID);
+        hit.fromHitInts.resize(fFromHitTargets.size());
+        for (size_t i = 0; i < fFromHitTargets.size(); i++)
+          if (fFromHitTargets[i].type == 'I')
+            hit.fromHitInts[i] = *l.fromHitInts[fFromHitTargets[i].intSlot];
 
-        const double hitTime = *l.time;
-        for (long i = 0; i < nRows; ++i) {
-          // keep local module local position so the world coordinates can be computed from it
-          G4ThreeVector moduleLocalPosition;
-          for (size_t t = 0; t < fOutputTargets.size(); t++) {
-            const auto &target = fOutputTargets[t];
-            if (target.isVector) {
-              double v[3];
-              for (int c = 0; c < 3; c++) {
-                const auto &s = target.components[c];
-                v[c] = s.columnIndex < 0 ? s.constant
-                                         : fOutputColumns[s.columnIndex][i];
-                if (s.relativeToHit)
-                  v[c] += hitTime;
-              }
-              const G4ThreeVector value(v[0], v[1], v[2]);
-              if (static_cast<int>(t) == fModuleLocalTargetIndex)
-                moduleLocalPosition = value;
-              target.attribute->Fill3Value(value);
-            } else {
-              const auto &s = target.scalar;
-              double v = s.columnIndex < 0 ? s.constant
-                                           : fOutputColumns[s.columnIndex][i];
-              if (s.relativeToHit)
-                v += hitTime;
-              target.attribute->FillDValue(v);
-            }
-          }
-          if (worldFromModule != nullptr) {
-            const auto worldPosition =
-                worldFromModule->InverseTransformPoint(moduleLocalPosition);
-            for (auto *attribute : fWorldFromModuleAttributes)
-              attribute->Fill3Value(worldPosition);
-          }
-          // every photon of this hit repeats the hit's own value
-          for (const auto &target : fFromHitTargets) {
-            if (target.type == 'U')
-              target.attribute->FillUValue(*l.volumeID);
-            else
-              target.attribute->FillIValue(*l.fromHitInts[target.intSlot]);
-          }
-          fOutputSourceHitIndexAttribute->FillDValue(sourceHitIndex);
-        }
+        FillPhotons(hit, 0, nRows);
       }
     }
     iter++;
   }
+}
+
+long GateDigitizerOpticalGenerativeActor::CheckOutputColumns(long nAsked) {
+  const auto &columns = GetGeneratorIO().columns;
+  // The manifest does not state the number of features the model actually
+  // returns. A mismatch shifts the mapping, therefore stop.
+  if (static_cast<int>(columns.size()) != fNumberOfModelColumns) {
+    std::ostringstream oss;
+    oss << "GateDigitizerOpticalGenerativeActor: the generator returned "
+        << columns.size() << " columns, but the declared output "
+        << "schema expects " << fNumberOfModelColumns
+        << ". Check the 'outputs' list of the bundle manifest against "
+           "what the model returns.";
+    Fatal(oss.str());
+  }
+
+  // Column length between the features has to be the same, but can be lower
+  // than the N that were requested, because of geometric efficiency etc.
+  const long nRows =
+      columns.empty() ? 0 : static_cast<long>(columns.front().size());
+  for (const auto &column : columns) {
+    if (static_cast<long>(column.size()) != nRows) {
+      std::ostringstream oss;
+      oss << "GateDigitizerOpticalGenerativeActor: the generator "
+          << "returned columns of differing lengths (" << nRows << " and "
+          << column.size() << "). Every column must have one entry per photon.";
+      Fatal(oss.str());
+    }
+  }
+  if (nRows > nAsked) {
+    std::ostringstream oss;
+    oss << "GateDigitizerOpticalGenerativeActor: the generator was asked "
+        << "for " << nAsked << " photons but returned " << nRows
+        << " rows. It may return fewer than requested, never more.";
+    Fatal(oss.str());
+  }
+  return nRows;
+}
+
+const G4AffineTransform *
+GateDigitizerOpticalGenerativeActor::ResolveWorldFromModule(
+    const GateUniqueVolumeID::Pointer &volumeID) const {
+  // the module is the parent of the crystal the hit is in
+  const auto depth = volumeID->fTouchable.GetDepth();
+  const auto parentIdx = (depth >= 1) ? (G4int)depth - 1 : 0;
+  return &volumeID->fTouchable.GetTransform(parentIdx);
+}
+
+void GateDigitizerOpticalGenerativeActor::PoolHit(threadLocalT &l,
+                                                  long nRequested,
+                                                  double sourceHitIndex) {
+  PooledHit hit;
+  hit.nRequested = nRequested;
+  hit.hitTime = *l.time;
+  hit.sourceHitIndex = sourceHitIndex;
+  if (fNeedsVolumeID)
+    hit.volumeID = *l.volumeID;
+  if (!fWorldFromModuleAttributes.empty())
+    hit.worldFromModule = ResolveWorldFromModule(hit.volumeID);
+  hit.fromHitInts.resize(fFromHitTargets.size());
+  for (size_t i = 0; i < fFromHitTargets.size(); i++)
+    if (fFromHitTargets[i].type == 'I')
+      hit.fromHitInts[i] = *l.fromHitInts[fFromHitTargets[i].intSlot];
+
+  // the generator gets the hit position repeated once per photon
+  const auto &pos = *l.pos;
+  auto &io = GetGeneratorIO();
+  io.xs.insert(io.xs.end(), nRequested, pos.x());
+  io.ys.insert(io.ys.end(), nRequested, pos.y());
+  io.zs.insert(io.zs.end(), nRequested, pos.z());
+  io.times.insert(io.times.end(), nRequested, hit.hitTime);
+
+  l.pool.push_back(std::move(hit));
+  l.pooledPhotons += nRequested;
+
+  if (l.pooledPhotons >= fTargetBatch)
+    FlushPool(l);
+}
+
+void GateDigitizerOpticalGenerativeActor::FlushPool(threadLocalT &l) {
+  if (l.pool.empty())
+    return;
+
+  {
+    // see EndOfEventAction: the generator is python and needs the gil
+    py::gil_scoped_acquire acquire;
+    fGenerator(this);  // reads the pooled input, fills the columns
+  }
+  CheckOutputColumns(l.pooledPhotons);
+
+  auto &io = GetGeneratorIO();
+  const long nRows =
+      io.columns.empty() ? 0 : static_cast<long>(io.columns.front().size());
+  if (nRows != l.pooledPhotons) {
+    // a pooled call has no way to tell which hit a dropped photon came from,
+    // so the model must return one row per entry it was given
+    std::ostringstream oss;
+    oss << "GateDigitizerOpticalGenerativeActor: the generator was given "
+        << l.pooledPhotons << " pooled photons but returned " << nRows
+        << " rows. In pooled mode it must return exactly one row per photon.";
+    Fatal(oss.str());
+  }
+
+  long offset = 0;
+  for (const auto &hit : l.pool) {
+    FillPhotons(hit, offset, hit.nRequested);
+    offset += hit.nRequested;
+  }
+
+  l.pool.clear();
+  l.pooledPhotons = 0;
+  io.xs.clear();
+  io.ys.clear();
+  io.zs.clear();
+  io.times.clear();
+}
+
+void GateDigitizerOpticalGenerativeActor::FillPhotons(const PooledHit &hit,
+                                                      long offset,
+                                                      long nRows) {
+  const auto &columns = GetGeneratorIO().columns;
+  for (long i = offset; i < offset + nRows; ++i) {
+    // kept so the world coordinates can be computed from it
+    G4ThreeVector moduleLocalPosition;
+    for (size_t t = 0; t < fOutputTargets.size(); t++) {
+      const auto &target = fOutputTargets[t];
+      if (target.isVector) {
+        double v[3];
+        for (int c = 0; c < 3; c++) {
+          const auto &s = target.components[c];
+          v[c] = s.columnIndex < 0 ? s.constant
+                                   : columns[s.columnIndex][i];
+          if (s.relativeToHit)
+            v[c] += hit.hitTime;
+        }
+        const G4ThreeVector value(v[0], v[1], v[2]);
+        if (static_cast<int>(t) == fModuleLocalTargetIndex)
+          moduleLocalPosition = value;
+        target.attribute->Fill3Value(value);
+      } else {
+        const auto &s = target.scalar;
+        double v =
+            s.columnIndex < 0 ? s.constant : columns[s.columnIndex][i];
+        if (s.relativeToHit)
+          v += hit.hitTime;
+        target.attribute->FillDValue(v);
+      }
+    }
+    if (hit.worldFromModule != nullptr) {
+      const auto worldPosition =
+          hit.worldFromModule->InverseTransformPoint(moduleLocalPosition);
+      for (auto *attribute : fWorldFromModuleAttributes)
+        attribute->Fill3Value(worldPosition);
+    }
+    // every photon of this hit repeats the hit's own value
+    for (size_t k = 0; k < fFromHitTargets.size(); k++) {
+      const auto &target = fFromHitTargets[k];
+      if (target.type == 'U')
+        target.attribute->FillUValue(hit.volumeID);
+      else
+        target.attribute->FillIValue(hit.fromHitInts[k]);
+    }
+    fOutputSourceHitIndexAttribute->FillDValue(hit.sourceHitIndex);
+  }
+}
+
+void GateDigitizerOpticalGenerativeActor::EndOfRunAction(const G4Run *run) {
+  // whatever is still pooled belongs to this run
+  if (fPooling)
+    FlushPool(fThreadLocalData.Get());
+  GateVDigitizerWithOutputActor::EndOfRunAction(run);
 }

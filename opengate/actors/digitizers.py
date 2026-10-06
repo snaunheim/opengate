@@ -11,8 +11,10 @@ from ..definitions import fwhm_to_sigma
 from ..utility import g4_units
 from ..physics import load_optical_properties_from_xml
 from ..contrib.optical.generative_bundle import (
+    DEFAULT_TARGET_BATCH,
     DERIVED_FROM_HIT,
     DERIVED_WORLD_FROM_MODULE,
+    INPUT_MODE_VECTOR,
     GenerativeModelBundle,
     validate_outputs,
 )
@@ -779,6 +781,13 @@ class DigitizerOpticalGenerativeActor(
         "_output_constants": ([], {"doc": "Internal, see 'outputs'."}),
         "_output_relative_to_hit": ([], {"doc": "Internal, see 'outputs'."}),
         "_output_derived": ([], {"doc": "Internal, see 'outputs'."}),
+        "_target_batch": (
+            0,
+            {
+                "doc": "Internal. Photons the actor collects before calling the "
+                "model; 0 calls it once per hit.",
+            },
+        ),
     }
 
     def __init__(self, *args, **kwargs):
@@ -791,6 +800,9 @@ class DigitizerOpticalGenerativeActor(
         # largest n_photons a single generator call may be given, from the
         # bundle manifest; None means the model has no limit
         self._max_batch = None
+        # set for a bundle whose model takes per-photon conditioning, which
+        # lets the actor pool several hits into one call
+        self._pooled = False
         DigitizerBase.__init__(self, *args, **kwargs)
         self.__initcpp__()
 
@@ -832,6 +844,13 @@ class DigitizerOpticalGenerativeActor(
             # only a bundle declares a batch size limit; a plain generator
             # object is always called with the whole hit at once
             self._max_batch = generator.max_batch
+            if generator.input_mode == INPUT_MODE_VECTOR:
+                # the model takes one conditioning entry per photon, so the
+                # actor can pool hits until the batch is full
+                self._pooled = True
+                self.user_info._target_batch = (
+                    generator.target_batch or DEFAULT_TARGET_BATCH
+                )
         elif self.user_info.outputs is None:
             fatal(
                 f"Set 'outputs' to declare which GATE attribute each column returns."
@@ -881,6 +900,36 @@ class DigitizerOpticalGenerativeActor(
         self.InitializeUserInfo(self.user_info)
         self.InitializeCpp()
 
+    def _call_pooled_generator(self, cpp_actor):
+        # called by C++ once a batch is full; the inputs hold one entry per
+        # photon and cover several hits, so the model gets them as arrays
+        ax = self.user_info.local_axes_order
+        off = self.user_info.local_position_offset
+        coords = [cpp_actor.fInputXs, cpp_actor.fInputYs, cpp_actor.fInputZs]
+        x = coords[ax[0]] + off[0]
+        y = coords[ax[1]] + off[1]
+        z = coords[ax[2]] + off[2]
+
+        columns = self.user_info.generator.generate_pooled(
+            x, y, z, cpp_actor.fInputTimes
+        )
+        self._apply_column_units(cpp_actor, columns)
+
+    def _apply_column_units(self, cpp_actor, columns):
+        if len(columns) != len(self._column_factors):
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': the generator "
+                f"returned {len(columns)} columns, but the declared output "
+                f"schema expects {len(self._column_factors)}. Check the "
+                f"'outputs' list against what the model returns."
+            )
+        cpp_actor.fOutputColumns = [
+            np.asarray(column, dtype=np.float64) * factor + offset
+            for column, factor, offset in zip(
+                columns, self._column_factors, self._column_offsets
+            )
+        ]
+
     def _call_generator(self, cpp_actor):
         # called once per hit by C++; writes N photon records as columns
         coords = [cpp_actor.fInputX, cpp_actor.fInputY, cpp_actor.fInputZ]
@@ -917,21 +966,7 @@ class DigitizerOpticalGenerativeActor(
             # not be the same length; concatenating them is still correct
             columns = [np.concatenate(pieces) for pieces in zip(*parts)]
 
-        # Catch a column mismatch
-        if len(columns) != len(self._column_factors):
-            fatal(
-                f"DigitizerOpticalGenerativeActor '{self.name}': the generator "
-                f"returned {len(columns)} columns, but the declared output "
-                f"schema expects {len(self._column_factors)}. Check the "
-                f"'outputs' list against what the model returns."
-            )
-
-        cpp_actor.fOutputColumns = [
-            np.asarray(column, dtype=np.float64) * factor + offset
-            for column, factor, offset in zip(
-                columns, self._column_factors, self._column_offsets
-            )
-        ]
+        self._apply_column_units(cpp_actor, columns)
 
     def _resolve_bundle_config(self):
         # read manifest, auto-configure/validate local_axes_order and local_position_offset against it
@@ -986,7 +1021,9 @@ class DigitizerOpticalGenerativeActor(
         if isinstance(self.user_info.generator, GenerativeModelBundle):
             self.user_info.generator.load_model()
         self.fScintillationYield = self._scintillation_yield
-        self.SetGeneratorFunction(self._call_generator)
+        self.SetGeneratorFunction(
+            self._call_pooled_generator if self._pooled else self._call_generator
+        )
         g4.GateDigitizerOpticalGenerativeActor.StartSimulationAction(self)
 
     def EndSimulationAction(self):
