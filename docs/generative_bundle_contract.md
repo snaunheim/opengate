@@ -2,7 +2,7 @@
 
 This document provides detailed information about the usage of the `DigitizerOpticalGenerativeActor` in combination with a generative model.
 
-Status: `schema_version: 2`.
+Status: `schema_version: 3`.
 
 ## General Information about the Actor
 The `DigitizerOpticalGenerativeActor` aims to replace time-consuming optical photon tracking with a faster alternative based on generative AI models. Instead of tracking the particle through the sensitive volume until they reach a sensor surface (e.g., a SiPM), the model allows direct generation of individual optical photons being detected at the sensor. To do so, the model is conditioned on the spatial location an energy-deposition has occured inside the sensitive volume. In order to collect the relevant information about hits recorded in the senstive volume the `DigitizerHitsCollectionActor`can be used before the `DigitizerOpticalGenerativeActor`.
@@ -12,6 +12,10 @@ To correctly reproduce light-sharing characteristics and similar effects, a gene
 
 ### Inputs
 
+How the conditioning reaches the model depends on `batch.input_mode`.
+
+With `input_mode: "scalar"` the model is called once per hit:
+
 | name | type | units | meaning |
 |---|---|---|---|
 | `x, y, z` | float | as declared in `coordinates.unit` | energy-deposition position, in the array-local frame, axis order and offset as declared in `coordinates` (see below) |
@@ -19,6 +23,17 @@ To correctly reproduce light-sharing characteristics and similar effects, a gene
 | `n_photons` | int | n/a | number of photons being emitted for this hit, already sampled by the actor; always ≥ 1 |
 
 A model that was never trained on timing information is allowed to ignore `time` internally, but the function signature must still accept it, the actor always passes five arguments.
+
+With `input_mode: "vector"` the actor collects photons until it has enough for a full batch and then makes a single call, so one call usually covers several hits and, since the pool is not emptied per event, several events:
+
+| name | type | units | meaning |
+|---|---|---|---|
+| `x, y, z` | 1-D float array | as declared in `coordinates.unit` | one entry per photon, the position of the hit this photon belongs to |
+| `time` | 1-D float array | ns | one entry per photon, the global time of that hit |
+
+All four arrays have the same length, which is the batch size, so a separate `n_photons` is not passed. Output row `i` has to belong to input entry `i`, since that is how the actor assigns each photon back to its hit. For the same reason a vector-mode model has to return exactly one row per entry it was given and cannot drop photons.
+
+Pooling is what makes the batches large enough to use a GPU well. Measured on an RTX 5080 with an NSF model, the cost per photon stops dropping above roughly 50000 photons per call, while a typical hit produces a few thousand. Calling the model once per hit therefore spends about half the time on per-call overhead.
 
 ### Outputs
 
@@ -41,7 +56,7 @@ my_bundle/
 This is an example.
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "format": "onnx",
   "model_file": "model.onnx",
 
@@ -64,11 +79,11 @@ This is an example.
   },
   "training": {"crystal_size_mm": [3.0, 3.0, 10.0], "material": "BGO", "module_configuration":"3x3"},
 
-  "batch": {"max_batch": null}
+  "batch": {"max_batch": null, "input_mode": "vector", "target_batch": 50000}
 }
 ```
 
-**`schema_version`**: The current version is `2`.
+**`schema_version`**: The current version is `3`.
 
 **`format`**: Needs to be either `"torchscript"`, `"onnx"`, or `"aotinductor"`. It selects which loader is used. Attention: Only ONNX shipped models have been tested extensively so far.
 
@@ -85,6 +100,8 @@ This is an example.
 
 **`batch`**:
 - `max_batch`: Defines the maximum number of synthetic optical photons being created in a single call. This is especially usefull if your GPU memory is limited and you want to prevent out-of-memory errors. However, it will increase the time that is needed to run the simulation since each call carries a significant amount of overhead. Setting the value to `null` allows the model to do the inference without a limit.
+- `input_mode`: Either `"scalar"` or `"vector"`, see the Inputs section. Required. `"vector"` is what allows the actor to pool photons from several hits into one call, which is the faster option; `"scalar"` keeps one call per hit.
+- `target_batch`: How many photons the actor collects before calling a vector-mode model. Only allowed together with `input_mode: "vector"` and must not exceed `max_batch`. Leave it out or set it to `null` to use the default of 50000.
 
 ### The Outputs List
 `outputs` declares the columns being used. **The order of the list is the order in which the model returns its columns**, so no second mapping table is needed. Names and types are checked against `GateDigiAttributeManager` itself, not against a list maintained in OpenGATE, so the schema cannot go stale when GATE gains new attributes.
