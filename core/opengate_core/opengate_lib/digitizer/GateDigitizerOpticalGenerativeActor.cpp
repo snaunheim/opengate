@@ -12,6 +12,8 @@
 #include "GateHelpersDigitizer.h"
 #include "GateTDigiAttribute.h"
 #include <G4Poisson.hh>
+#include <Randomize.hh>
+#include <cmath>
 
 GateDigitizerOpticalGenerativeActor::GateDigitizerOpticalGenerativeActor(
     py::dict &user_info)
@@ -254,8 +256,7 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
 
   while (!iter.IsAtEnd()) {
     if (*l.edep > 0) {
-      // sample N from Poisson(edep * scintillation_yield)
-      const long N = G4Poisson((*l.edep) * fScintillationYield);
+      const long N = SamplePhotonCount(*l.edep);
 
       const auto sourceHitIndex =
           static_cast<double>(l.threadIndexOffset + l.nHitsProcessed);
@@ -299,6 +300,16 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
     }
     iter++;
   }
+}
+
+long GateDigitizerOpticalGenerativeActor::SamplePhotonCount(double edep) const {
+  // same as G4Scintillation, so the count fluctuates like in the full sim
+  const double mean = edep * fScintillationYield;
+  if (mean > 10.) {
+    const double sigma = fResolutionScale * std::sqrt(mean);
+    return static_cast<long>(G4RandGauss::shoot(mean, sigma) + 0.5);
+  }
+  return static_cast<long>(G4Poisson(mean));
 }
 
 long GateDigitizerOpticalGenerativeActor::CheckOutputColumns(long nAsked) {

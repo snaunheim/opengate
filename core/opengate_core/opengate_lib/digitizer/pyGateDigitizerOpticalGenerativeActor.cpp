@@ -38,6 +38,8 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
 
       .def_readwrite("fScintillationYield",
                      &GateDigitizerOpticalGenerativeActor::fScintillationYield)
+      .def_readwrite("fResolutionScale",
+                     &GateDigitizerOpticalGenerativeActor::fResolutionScale)
 
       // inputs set by C++ before each generator call
       .def_property(

@@ -794,6 +794,7 @@ class DigitizerOpticalGenerativeActor(
         # Resolved in resolve_and_validate_config, consumed in
         # StartSimulationAction; None means "not resolved yet".
         self._scintillation_yield = None
+        self._resolution_scale = None
         # Per model column, applied to it before it is handed to C++
         self._column_factors = None
         self._column_offsets = None
@@ -894,6 +895,22 @@ class DigitizerOpticalGenerativeActor(
         self._scintillation_yield = props["constant_properties"]["SCINTILLATIONYIELD"][
             "property_value"
         ]
+        # Geant4 also stops when a scintillator has no RESOLUTIONSCALE
+        if "RESOLUTIONSCALE" not in props["constant_properties"]:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': could not find "
+                f"RESOLUTIONSCALE for material '{material_name}' in "
+                f"{self.user_info.optical_properties_file}."
+            )
+        self._resolution_scale = props["constant_properties"]["RESOLUTIONSCALE"][
+            "property_value"
+        ]
+        if self._resolution_scale < 0:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': RESOLUTIONSCALE "
+                f"of material '{material_name}' is {self._resolution_scale}, "
+                f"it must not be negative."
+            )
 
     def initialize(self):
         DigitizerBase.initialize(self)
@@ -1021,6 +1038,7 @@ class DigitizerOpticalGenerativeActor(
         if isinstance(self.user_info.generator, GenerativeModelBundle):
             self.user_info.generator.load_model()
         self.fScintillationYield = self._scintillation_yield
+        self.fResolutionScale = self._resolution_scale
         self.SetGeneratorFunction(
             self._call_pooled_generator if self._pooled else self._call_generator
         )

@@ -18,10 +18,10 @@
 
 namespace py = pybind11;
 
-/* For every energy-deposition step, the actor samples N from a Poisson distribution
-   (N = Poisson(edep *scintillation_yield)) and calls a generative model once per hit with the
-   batch size being N. The model generates N synthetic particles (e.g. optical photons) records
-   in one call.
+/* For every energy-deposition step, the actor samples the number of scintillation photons N
+   the way G4Scintillation does (mean edep * scintillation_yield, width broadened by
+   resolution_scale) and calls a generative model once per hit with the batch size being N.
+   The model generates N synthetic particles (e.g. optical photons) records in one call.
    
    The precise quantities that are generated can be declared in the bundle manifest which caries
    additional information about the generative model used.
@@ -52,8 +52,11 @@ public:
 
   void SetGeneratorFunction(GeneratorType &f);
 
-  // scintillation yield in photons/MeV; N ~ Poisson(edep * yield)
+  // scintillation yield in photons/MeV, the mean of N is edep * yield
   double fScintillationYield;
+
+  // RESOLUTIONSCALE of the material, widens the spread of N
+  double fResolutionScale{1.0};
 
   // What the generator reads and writes. One set per worker thread, since in
   // MT every thread calls the generator for its own hits.
@@ -195,6 +198,9 @@ protected:
     long pooledPhotons{0};
   };
   G4Cache<threadLocalT> fThreadLocalData;
+
+  // photon count for one hit, as G4Scintillation draws it; may be <= 0
+  long SamplePhotonCount(double edep) const;
 
   // append one hit to the pool and call the generator once the target batch
   // size is reached.

@@ -10,6 +10,10 @@ The `DigitizerOpticalGenerativeActor` aims to replace time-consuming optical pho
 ### Reference Frame
 To correctly reproduce light-sharing characteristics and similar effects, a generative model typically replaces the optical photon transport of the whole detector, which might be an array of multiple scintillation crystals. The volume which encloses the whole detector is in the following text called module. Spatial postions that are exchanged between the model and the actor are given in the **module-local** frame, with the origin being in the iso-center of the module. For an array with N*N scintillation crystals and N being an odd-number, the module's iso-center therefore coincides with the iso-center of the central crystal. Even if the model represents a monolithic detector, the user needs to define the module volume which might be matching with the crystal volume. The reason is that the actor requires `PostPositionLocalModule`on its input collection in order to extract the condition forwarded to the model.
 
+### Number of Photons
+
+The model does not decide how many photons a hit emits, the actor does. It draws the count the same way `G4Scintillation` does in a full optical simulation: the mean is `TotalEnergyDeposit × SCINTILLATIONYIELD`, and for a mean above 10 the count comes from a Gaussian of width `RESOLUTIONSCALE × √mean`, below that from a Poisson distribution. Both values are read from `optical_properties_file` for the material of the attached volume, so the photon statistics match a full simulation with the same material database. The model then only has to describe where each photon ends up.
+
 ### Inputs
 
 How the conditioning reaches the model depends on `batch.input_mode`.
