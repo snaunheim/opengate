@@ -28,7 +28,7 @@ With `input_mode: "scalar"` the model is called once per hit:
 
 A model that was never trained on timing information is allowed to ignore `time` internally, but the function signature must still accept it, the actor always passes five arguments.
 
-With `input_mode: "vector"` the actor collects photons until it has enough for a full batch and then makes a single call, so one call usually covers several hits and, since the pool is not emptied per event, several events:
+With `input_mode: "vector"` the actor collects photons and calls the model with exactly `target_batch` of them, so one call usually covers several hits and, since the pool is not emptied per event, several events. A hit can be split across two calls. Only the last call of a run is smaller:
 
 | name | type | units | meaning |
 |---|---|---|---|
@@ -83,7 +83,7 @@ This is an example.
   },
   "training": {"crystal_size_mm": [3.0, 3.0, 10.0], "material": "BGO", "module_configuration":"3x3"},
 
-  "batch": {"max_batch": null, "input_mode": "vector", "target_batch": 50000}
+  "batch": {"input_mode": "vector", "target_batch": 50000}
 }
 ```
 
@@ -103,9 +103,12 @@ This is an example.
 **`training`**: Descriptive metadata of the model that is being used. This is propably the first thing to cross check if the model's output doesn't match with prior physics expectation.
 
 **`batch`**:
-- `max_batch`: Defines the maximum number of synthetic optical photons being created in a single call. This is especially usefull if your GPU memory is limited and you want to prevent out-of-memory errors. However, it will increase the time that is needed to run the simulation since each call carries a significant amount of overhead. Setting the value to `null` allows the model to do the inference without a limit.
 - `input_mode`: Either `"scalar"` or `"vector"`, see the Inputs section. Required. `"vector"` is what allows the actor to pool photons from several hits into one call, which is the faster option; `"scalar"` keeps one call per hit.
-- `target_batch`: How many photons the actor collects before calling a vector-mode model. Only allowed together with `input_mode: "vector"` and must not exceed `max_batch`. Leave it out or set it to `null` to use the default of 50000.
+- `target_batch`: The number of photons per model call.
+  - Scalar mode: the maximum number of samples per call. A bigger hit is split into several calls. `null` or left out means one call per hit, whatever its size.
+  - Vector mode: the exact number of samples per call. `null` or left out means 50000.
+
+  Use it to keep a call within the GPU memory. Smaller calls cost more time, since each call carries its own overhead.
 
 ### The Outputs List
 `outputs` declares the columns being used. **The order of the list is the order in which the model returns its columns**, so no second mapping table is needed. Names and types are checked against `GateDigiAttributeManager` itself, not against a list maintained in OpenGATE, so the schema cannot go stale when GATE gains new attributes.

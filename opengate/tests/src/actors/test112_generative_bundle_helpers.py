@@ -46,7 +46,7 @@ def make_torchscript_bundle(bundle_dir):
 
     manifest = _manifest(model_file)
     # this model takes one position per call, so the actor calls it once per hit
-    manifest["batch"] = {"max_batch": None, "input_mode": "scalar"}
+    manifest["batch"] = {"input_mode": "scalar"}
     with open(bundle_dir / "manifest.json", "w") as f:
         json.dump(manifest, f)
 
@@ -138,7 +138,6 @@ def make_vector_torchscript_bundle(bundle_dir, target_batch=4096):
     # same schema as the scalar bundle, so the two runs are comparable
     manifest = _manifest(model_file)
     manifest["batch"] = {
-        "max_batch": None,
         "input_mode": "vector",
         "target_batch": target_batch,
     }

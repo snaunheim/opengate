@@ -13,6 +13,7 @@
 #include "GateTDigiAttribute.h"
 #include <G4Poisson.hh>
 #include <Randomize.hh>
+#include <algorithm>
 #include <cmath>
 
 GateDigitizerOpticalGenerativeActor::GateDigitizerOpticalGenerativeActor(
@@ -283,7 +284,6 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
         const long nRows = CheckOutputColumns(N);
 
         PooledHit hit;
-        hit.nRequested = N;
         hit.hitTime = *l.time;
         hit.sourceHitIndex = sourceHitIndex;
         if (fNeedsVolumeID)
@@ -359,10 +359,11 @@ GateDigitizerOpticalGenerativeActor::ResolveWorldFromModule(
 }
 
 void GateDigitizerOpticalGenerativeActor::PoolHit(threadLocalT &l,
-                                                  long nRequested,
+                                                  long nPhotons,
                                                   double sourceHitIndex) {
   PooledHit hit;
-  hit.nRequested = nRequested;
+  hit.nPending = nPhotons;
+  hit.position = *l.pos;
   hit.hitTime = *l.time;
   hit.sourceHitIndex = sourceHitIndex;
   if (fNeedsVolumeID)
@@ -374,57 +375,64 @@ void GateDigitizerOpticalGenerativeActor::PoolHit(threadLocalT &l,
     if (fFromHitTargets[i].type == 'I')
       hit.fromHitInts[i] = *l.fromHitInts[fFromHitTargets[i].intSlot];
 
-  // the generator gets the hit position repeated once per photon
-  const auto &pos = *l.pos;
-  auto &io = GetGeneratorIO();
-  io.xs.insert(io.xs.end(), nRequested, pos.x());
-  io.ys.insert(io.ys.end(), nRequested, pos.y());
-  io.zs.insert(io.zs.end(), nRequested, pos.z());
-  io.times.insert(io.times.end(), nRequested, hit.hitTime);
-
   l.pool.push_back(std::move(hit));
-  l.pooledPhotons += nRequested;
+  l.pooledPhotons += nPhotons;
 
-  if (l.pooledPhotons >= fTargetBatch)
-    FlushPool(l);
+  // a big hit can fill more than one batch
+  while (l.pooledPhotons >= fTargetBatch)
+    FlushBatch(l, fTargetBatch);
 }
 
-void GateDigitizerOpticalGenerativeActor::FlushPool(threadLocalT &l) {
-  if (l.pool.empty())
+void GateDigitizerOpticalGenerativeActor::FlushBatch(threadLocalT &l, long n) {
+  if (n <= 0)
     return;
+
+  // the generator gets the position and time of each photon's hit, the last
+  // hit may only partly fit and keeps its rest for the next call
+  auto &io = GetGeneratorIO();
+  io.xs.clear();
+  io.ys.clear();
+  io.zs.clear();
+  io.times.clear();
+  long left = n;
+  for (const auto &hit : l.pool) {
+    if (left == 0)
+      break;
+    const long k = std::min(left, hit.nPending);
+    io.xs.insert(io.xs.end(), k, hit.position.x());
+    io.ys.insert(io.ys.end(), k, hit.position.y());
+    io.zs.insert(io.zs.end(), k, hit.position.z());
+    io.times.insert(io.times.end(), k, hit.hitTime);
+    left -= k;
+  }
 
   {
     // see EndOfEventAction: the generator is python and needs the gil
     py::gil_scoped_acquire acquire;
     fGenerator(this);  // reads the pooled input, fills the columns
   }
-  CheckOutputColumns(l.pooledPhotons);
-
-  auto &io = GetGeneratorIO();
-  const long nRows =
-      io.columns.empty() ? 0 : static_cast<long>(io.columns.front().size());
-  if (nRows != l.pooledPhotons) {
+  const long nRows = CheckOutputColumns(n);
+  if (nRows != n) {
     // a pooled call has no way to tell which hit a dropped photon came from,
     // so the model must return one row per entry it was given
     std::ostringstream oss;
-    oss << "GateDigitizerOpticalGenerativeActor: the generator was given "
-        << l.pooledPhotons << " pooled photons but returned " << nRows
+    oss << "GateDigitizerOpticalGenerativeActor: the generator was given " << n
+        << " pooled photons but returned " << nRows
         << " rows. In pooled mode it must return exactly one row per photon.";
     Fatal(oss.str());
   }
 
   long offset = 0;
-  for (const auto &hit : l.pool) {
-    FillPhotons(hit, offset, hit.nRequested);
-    offset += hit.nRequested;
+  while (offset < n) {
+    auto &hit = l.pool.front();
+    const long k = std::min(n - offset, hit.nPending);
+    FillPhotons(hit, offset, k);
+    offset += k;
+    hit.nPending -= k;
+    if (hit.nPending == 0)
+      l.pool.pop_front();
   }
-
-  l.pool.clear();
-  l.pooledPhotons = 0;
-  io.xs.clear();
-  io.ys.clear();
-  io.zs.clear();
-  io.times.clear();
+  l.pooledPhotons -= n;
 }
 
 void GateDigitizerOpticalGenerativeActor::FillPhotons(const PooledHit &hit,
@@ -478,7 +486,9 @@ void GateDigitizerOpticalGenerativeActor::FillPhotons(const PooledHit &hit,
 
 void GateDigitizerOpticalGenerativeActor::EndOfRunAction(const G4Run *run) {
   // whatever is still pooled belongs to this run
-  if (fPooling)
-    FlushPool(fThreadLocalData.Get());
+  if (fPooling) {
+    auto &l = fThreadLocalData.Get();
+    FlushBatch(l, l.pooledPhotons);
+  }
   GateVDigitizerWithOutputActor::EndOfRunAction(run);
 }

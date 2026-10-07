@@ -18,7 +18,7 @@ INPUT_MODE_SCALAR = "scalar"
 INPUT_MODE_VECTOR = "vector"
 SUPPORTED_INPUT_MODES = (INPUT_MODE_SCALAR, INPUT_MODE_VECTOR)
 
-# used in vector mode when the manifest does not state a target_batch.
+# photons per call in vector mode when the manifest does not state a target_batch.
 # measured on an RTX 5080: the cost per photon stops dropping above roughly
 # this many photons per call, a typical hit alone reaches half of it.
 DEFAULT_TARGET_BATCH = 50000
@@ -183,17 +183,6 @@ class GenerativeModelBundle:
                 f"coordinates.offset={offset!r}; expected three numbers, one "
                 f"per axis, in the model's own axis order."
             )
-        max_batch = self.manifest["batch"].get("max_batch")
-        if max_batch is not None and (
-            not isinstance(max_batch, int)
-            or isinstance(max_batch, bool)
-            or max_batch < 1
-        ):
-            fatal(
-                f"Generative model bundle '{self.bundle_path}' manifest has "
-                f"batch.max_batch={max_batch!r}; expected a positive whole "
-                f"number, or null when the model has no batch size limit."
-            )
         input_mode = self.manifest["batch"].get("input_mode")
         if input_mode not in SUPPORTED_INPUT_MODES:
             fatal(
@@ -202,42 +191,16 @@ class GenerativeModelBundle:
                 f"{SUPPORTED_INPUT_MODES}."
             )
         target_batch = self.manifest["batch"].get("target_batch")
-        if target_batch is not None:
-            if (
-                not isinstance(target_batch, int)
-                or isinstance(target_batch, bool)
-                or target_batch < 1
-            ):
-                fatal(
-                    f"Generative model bundle '{self.bundle_path}' manifest has "
-                    f"batch.target_batch={target_batch!r}; expected a positive "
-                    f"whole number, or null to let the actor decide."
-                )
-            if input_mode != INPUT_MODE_VECTOR:
-                fatal(
-                    f"Generative model bundle '{self.bundle_path}' manifest "
-                    f"declares batch.target_batch={target_batch}, but "
-                    f"batch.input_mode={input_mode!r}. Pooling photons into "
-                    f"batches of that size needs one conditioning entry per "
-                    f"photon, so it only applies to "
-                    f"input_mode={INPUT_MODE_VECTOR!r}."
-                )
-            if max_batch is not None and target_batch > max_batch:
-                fatal(
-                    f"Generative model bundle '{self.bundle_path}' manifest has "
-                    f"batch.target_batch={target_batch} above "
-                    f"batch.max_batch={max_batch}. The pooled batch size "
-                    f"cannot exceed what the model accepts."
-                )
-
-    @property
-    def max_batch(self):
-        """
-        The largest n_photons this model may be called with, or None when it
-        has no limit. A hit that produces more photons than this is split
-        across several calls, see generate_batch.
-        """
-        return self.manifest["batch"].get("max_batch")
+        if target_batch is not None and (
+            not isinstance(target_batch, int)
+            or isinstance(target_batch, bool)
+            or target_batch < 1
+        ):
+            fatal(
+                f"Generative model bundle '{self.bundle_path}' manifest has "
+                f"batch.target_batch={target_batch!r}; expected a positive "
+                f"whole number, or null for the default."
+            )
 
     @property
     def input_mode(self):
@@ -251,8 +214,8 @@ class GenerativeModelBundle:
     @property
     def target_batch(self):
         """
-        The batch size the actor aims for when pooling photons, or None when
-        the manifest does not state one. Only meaningful in 'vector' mode.
+        Scalar mode: the maximum number of samples per call.
+        Vector mode: the exact number of samples per call.
         """
         return self.manifest["batch"].get("target_batch")
 

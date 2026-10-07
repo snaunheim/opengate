@@ -784,8 +784,8 @@ class DigitizerOpticalGenerativeActor(
         "_target_batch": (
             0,
             {
-                "doc": "Internal. Photons the actor collects before calling the "
-                "model; 0 calls it once per hit.",
+                "doc": "Internal. Photons per pooled model call; 0 calls it "
+                "once per hit.",
             },
         ),
     }
@@ -800,9 +800,8 @@ class DigitizerOpticalGenerativeActor(
         # Per model column, applied to it before it is handed to C++
         self._column_factors = None
         self._column_offsets = None
-        # largest n_photons a single generator call may be given, from the
-        # bundle manifest; None means the model has no limit
-        self._max_batch = None
+        # scalar mode: max photons per call, None means one call per hit
+        self._scalar_target_batch = None
         # set for a bundle whose model takes per-photon conditioning, which
         # lets the actor pool several hits into one call
         self._pooled = False
@@ -849,9 +848,7 @@ class DigitizerOpticalGenerativeActor(
         generator = self.user_info.generator
         if isinstance(generator, GenerativeModelBundle):
             outputs = generator.resolved_outputs()
-            # only a bundle declares a batch size limit; a plain generator
-            # object is always called with the whole hit at once
-            self._max_batch = generator.max_batch
+            # a plain generator object is always called with the whole hit
             if generator.input_mode == INPUT_MODE_VECTOR:
                 # the model takes one conditioning entry per photon, so the
                 # actor can pool hits until the batch is full
@@ -859,6 +856,8 @@ class DigitizerOpticalGenerativeActor(
                 self.user_info._target_batch = (
                     generator.target_batch or DEFAULT_TARGET_BATCH
                 )
+            else:
+                self._scalar_target_batch = generator.target_batch
         elif self.user_info.outputs is None:
             fatal(
                 f"Set 'outputs' to declare which GATE attribute each column returns."
@@ -969,18 +968,15 @@ class DigitizerOpticalGenerativeActor(
         n_photons = cpp_actor.fInputN
 
         generate_batch = self.user_info.generator.generate_batch
-        if self._max_batch is None or n_photons <= self._max_batch:
+        limit = self._scalar_target_batch
+        if limit is None or n_photons <= limit:
             columns = generate_batch(x, y, z, time, n_photons)
         else:
-            # The model was validated only up to max_batch, typically because a
-            # larger call does not fit in GPU memory. Split the hit into full
-            # batches plus whatever is left, and join the pieces back together.
-            # Each call costs the model's fixed overhead again, so this is only
-            # done when the manifest asks for it.
+            # split the hit into calls of at most target_batch photons
             parts = []
             remaining = n_photons
             while remaining > 0:
-                n = min(remaining, self._max_batch)
+                n = min(remaining, limit)
                 parts.append(generate_batch(x, y, z, time, n))
                 remaining -= n
             if len({len(p) for p in parts}) != 1:
