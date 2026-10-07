@@ -375,6 +375,12 @@ class GenerativeModelBundle:
         axes_order = self.coordinates["axes_order"]
         return [GATE_LOCAL_AXES.index(name) for name in axes_order]
 
+    def coordinate_unit_factor(self):
+        """How many GATE length units (mm) one unit of coordinates.unit is."""
+        return unit_factor(
+            self.coordinates.get("unit"), "coordinates", self.bundle_path
+        )
+
     def expected_local_position_offset(self):
         """
         The (dx, dy, dz) offset, in the model's own axis order, to apply to the
@@ -383,9 +389,7 @@ class GenerativeModelBundle:
         coordinates.offset declares WHAT MUST BE ADDED to a model coordinate to
         put (0,0,0) at the module iso-center.
         """
-        factor = unit_factor(
-            self.coordinates.get("unit"), "coordinates", self.bundle_path
-        )
+        factor = self.coordinate_unit_factor()
         offset = self.coordinates.get("offset", [0.0, 0.0, 0.0])
         return [-v * factor for v in offset]
 

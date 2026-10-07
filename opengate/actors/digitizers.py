@@ -795,6 +795,8 @@ class DigitizerOpticalGenerativeActor(
         # StartSimulationAction; None means "not resolved yet".
         self._scintillation_yield = None
         self._resolution_scale = None
+        # the model's length unit in mm, from the bundle's coordinates.unit
+        self._coordinate_factor = 1.0
         # Per model column, applied to it before it is handed to C++
         self._column_factors = None
         self._column_offsets = None
@@ -922,10 +924,11 @@ class DigitizerOpticalGenerativeActor(
         # photon and cover several hits, so the model gets them as arrays
         ax = self.user_info.local_axes_order
         off = self.user_info.local_position_offset
+        f = self._coordinate_factor
         coords = [cpp_actor.fInputXs, cpp_actor.fInputYs, cpp_actor.fInputZs]
-        x = coords[ax[0]] + off[0]
-        y = coords[ax[1]] + off[1]
-        z = coords[ax[2]] + off[2]
+        x = (coords[ax[0]] + off[0]) / f
+        y = (coords[ax[1]] + off[1]) / f
+        z = (coords[ax[2]] + off[2]) / f
 
         columns = self.user_info.generator.generate_pooled(
             x, y, z, cpp_actor.fInputTimes
@@ -952,9 +955,11 @@ class DigitizerOpticalGenerativeActor(
         coords = [cpp_actor.fInputX, cpp_actor.fInputY, cpp_actor.fInputZ]
         ax = self.user_info.local_axes_order
         off = self.user_info.local_position_offset
-        x = coords[ax[0]] + off[0]
-        y = coords[ax[1]] + off[1]
-        z = coords[ax[2]] + off[2]
+        # offset is in mm, the model gets its own length unit
+        f = self._coordinate_factor
+        x = (coords[ax[0]] + off[0]) / f
+        y = (coords[ax[1]] + off[1]) / f
+        z = (coords[ax[2]] + off[2]) / f
         time = cpp_actor.fInputTime
         n_photons = cpp_actor.fInputN
 
@@ -1027,6 +1032,7 @@ class DigitizerOpticalGenerativeActor(
         else:
             self.user_info.local_position_offset = expected_offset
 
+        self._coordinate_factor = bundle.coordinate_unit_factor()
         self.user_info.generator = bundle
 
     def StartSimulationAction(self):

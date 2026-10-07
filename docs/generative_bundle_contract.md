@@ -97,8 +97,8 @@ This is an example.
 
 **`coordinates`**: Defines the interpretation of position axis.
 - `axes_order`: Declares the permutation of `["depth", "transverse", "axial"]`. GATE's own module-local frame (`PostPositionLocalModule`) is `(x=depth, y=transverse, z=axial)`. If your model was trained with a different ordering, declare it (`["transverse", "axial", "depth"]`) and the actor will permute GATE's coordinates into that order before calling your model. `axes_order` describes only the input side, it has no effect on `outputs`.
-- `offset`: Origin offset in the model's own axis order, each meaning *the value added to that coordinate so that (0,0,0) lies at the module center*. A model whose depth axis starts at the sensor surface of a 10 mm deep module declares `-5.0` on its depth axis. 
-- `unit`: Declares the unit the coordinates axes, as a name from `opengate.g4_units`.
+- `offset`: Origin offset in the model's own axis order and in `unit`, each meaning *the value added to that coordinate so that (0,0,0) lies at the module center*. A model whose depth axis starts at the sensor surface of a 10 mm deep module declares `-5.0` on its depth axis (or `-0.5` with `unit: "cm"`).
+- `unit`: The length unit the model expects its input coordinates in, as a name from `opengate.g4_units`. The actor converts the positions into this unit before calling the model.
 
 **`training`**: Descriptive metadata of the model that is being used. This is propably the first thing to cross check if the model's output doesn't match with prior physics expectation.
 
