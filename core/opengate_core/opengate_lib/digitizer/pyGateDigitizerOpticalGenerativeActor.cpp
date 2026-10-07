@@ -9,6 +9,8 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <sstream>
+#include <stdexcept>
 
 namespace py = pybind11;
 
@@ -20,6 +22,11 @@ ViewOf(GateDigitizerOpticalGenerativeActor &actor, std::vector<double> &v) {
   return py::array_t<double>({static_cast<py::ssize_t>(v.size())},
                              {sizeof(double)}, v.data(), py::cast(&actor));
 }
+
+// one model output column; forcecast lets numpy turn float32 or strided input
+// into contiguous float64 in C
+using ColumnArray =
+    py::array_t<double, py::array::c_style | py::array::forcecast>;
 
 // the generator runs on the thread that owns the hits, so every access goes
 // to that thread's own set
@@ -88,12 +95,28 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
           })
 
       // outputs filled by Python, one column per declared model output, each
-      // of length fInputN, in the order of the manifest's 'outputs' list
+      // of length fInputN, in the order of the manifest's 'outputs' list.
+      // Taken as arrays and copied in one block per column: converting
+      // straight to std::vector<std::vector<double>> would go through one
+      // python object per value.
       .def_property(
           "fOutputColumns",
           [](GateDigitizerOpticalGenerativeActor &a) { return IO(a).columns; },
           [](GateDigitizerOpticalGenerativeActor &a,
-             std::vector<std::vector<double>> v) {
-            IO(a).columns = std::move(v);
+             const std::vector<ColumnArray> &v) {
+            auto &columns = IO(a).columns;
+            columns.resize(v.size());
+            for (size_t i = 0; i < v.size(); i++) {
+              if (v[i].ndim() != 1) {
+                std::ostringstream oss;
+                oss << "GateDigitizerOpticalGenerativeActor: output column "
+                    << i << " has " << v[i].ndim()
+                    << " dimensions, every column must be 1-dimensional.";
+                throw std::invalid_argument(oss.str());
+              }
+              // keeps the capacity of the previous call, so no reallocation
+              const double *p = v[i].data();
+              columns[i].assign(p, p + v[i].size());
+            }
           });
 }
