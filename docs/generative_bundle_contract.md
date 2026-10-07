@@ -41,9 +41,9 @@ Pooling is what makes the batches large enough to use a GPU well. Measured on an
 
 ### Outputs
 
-The model returns multiple one-dimensional arrays, each 1-D sequence should be in a form such that `np.asarray(..., dtype=np.float64)` can consume without error. An array represents a specific quantity (e.g., detected X location), and one row represents one optical photon. The output that GATE produces and how it interacts with the model is defined in the manifest's `outputs` list. The number of `outputs` entries (that do not declare a constant `value`) must equal to number of columns return by the model.
+The model returns multiple one-dimensional arrays, each 1-D sequence should be in a form such that `np.asarray(..., dtype=np.float64)` can consume without error. An array represents a specific quantity (e.g., detected X location), and one row represents one optical photon. The output that GATE produces and how it interacts with the model is defined in the manifest's `outputs` list. The number of `outputs` entries that are model columns, i.e. that declare neither a constant `value` nor `derived`, must equal the number of columns the model returns.
 
-The output digi collection carries the declared attributes under their GATE names (so a `PostPositionLocalModule` entry appears as the branches `PostPositionLocalModule_X/_Y/_Z`), plus `SourceHitIndex`, the index of the input row that produced each photon.
+The output digi collection carries the declared attributes under their GATE names (so a `PostPositionLocalModule` entry appears as the branches `PostPositionLocalModule_X/_Y/_Z`), plus `SourceHitIndex`, a number that identifies the hit each photon came from, unique across events and threads.
 
 ## Bundle Layout
 
@@ -51,7 +51,7 @@ A bundle is either a directory or a zip file containing a manifest and the seria
 ```
 my_bundle/
   manifest.json
-  model.onnx          # or model.onnx, or a directory of AOTInductor artifacts
+  model.onnx          # or model.pt (TorchScript), or a directory of AOTInductor artifacts
 ```
 
 `GenerativeModelBundle` opens the directory or zip file and reads `manifest.json` from the root. The entry `model_file` in the manifest declares the model file that should be used.
