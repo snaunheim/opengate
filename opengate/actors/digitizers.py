@@ -712,8 +712,8 @@ class DigitizerOpticalGenerativeActor(
         declared model column, all of the same length. That length may be smaller than n_photons, since
         photons that never reach the sensor produce no row. Such a generator has no manifest, so 'outputs'
         must declare its schema.
-      - a string/Path to a generative model bundle directory or zip, in which case outputs, local_axes_order and local_position_offset are
-        all auto-configured from the bundle's manifest.
+      - a string/Path to a generative model bundle directory or zip, or an already opened GenerativeModelBundle, in which case
+        outputs, local_axes_order and local_position_offset are all auto-configured from the bundle's manifest.
 
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
@@ -826,10 +826,15 @@ class DigitizerOpticalGenerativeActor(
                 f"generate_batch(x, y, z, time, n_photons)."
             )
 
-        # For a bundle path, read and validate the manifest and reconcile the
-        # coordinate convention now. The model itself is NOT deserialized here
+        # A bundle path is opened here, the model itself is loaded only in
+        # StartSimulationAction
         if isinstance(self.user_info.generator, (str, Path)):
-            self._resolve_bundle_config()
+            self.user_info.generator = GenerativeModelBundle(
+                self.user_info.generator, defer_model_load=True
+            )
+        # also for a bundle the user opened, otherwise its coordinates are ignored
+        if isinstance(self.user_info.generator, GenerativeModelBundle):
+            self._resolve_bundle_config(self.user_info.generator)
 
         # Resolve the output schema and hand it to C++ as flat vectors.
         self._resolve_output_schema()
@@ -990,9 +995,8 @@ class DigitizerOpticalGenerativeActor(
 
         self._apply_column_units(cpp_actor, columns)
 
-    def _resolve_bundle_config(self):
-        # read manifest, auto-configure/validate local_axes_order and local_position_offset against it
-        bundle = GenerativeModelBundle(self.user_info.generator, defer_model_load=True)
+    def _resolve_bundle_config(self, bundle):
+        # auto-configure/validate local_axes_order and local_position_offset against the manifest
         expected_axes_order = bundle.expected_local_axes_order()
         expected_offset = bundle.expected_local_position_offset()
 
@@ -1005,7 +1009,7 @@ class DigitizerOpticalGenerativeActor(
                     f"DigitizerOpticalGenerativeActor '{self.name}': "
                     f"local_axes_order={self.user_info.local_axes_order} was set "
                     f"explicitly, but the generative model bundle "
-                    f"'{self.user_info.generator}' declares "
+                    f"'{bundle.bundle_path}' declares "
                     f"coordinates.axes_order="
                     f"{bundle.coordinates['axes_order']}, which implies "
                     f"local_axes_order={expected_axes_order}. Remove the "
@@ -1021,7 +1025,7 @@ class DigitizerOpticalGenerativeActor(
                     f"DigitizerOpticalGenerativeActor '{self.name}': "
                     f"local_position_offset={self.user_info.local_position_offset} "
                     f"was set explicitly, but the generative model bundle "
-                    f"'{self.user_info.generator}' declares coordinates.offset="
+                    f"'{bundle.bundle_path}' declares coordinates.offset="
                     f"{bundle.coordinates.get('offset')} in "
                     f"{bundle.coordinates.get('unit')!r}, which implies "
                     f"local_position_offset={expected_offset}. Remove the "
@@ -1033,7 +1037,6 @@ class DigitizerOpticalGenerativeActor(
             self.user_info.local_position_offset = expected_offset
 
         self._coordinate_factor = bundle.coordinate_unit_factor()
-        self.user_info.generator = bundle
 
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
