@@ -70,9 +70,9 @@ def unit_factor(unit, what, bundle_path):
 class GenerativeModelBundle:
     """
     Loads a generative-model bundle (directory or zip) conforming to
-    docs/generative_bundle_contract.md and exposes generate_batch(), so it
-    can be used directly as the 'generator' of a DigitizerOpticalGenerativeActor
-    or of opengate.contrib.optical.compose_event.
+    docs/generative_bundle_contract.md and exposes generate_batch() (scalar
+    mode) and generate_pooled() (vector mode), so it can be used directly as
+    the 'generator' of a DigitizerOpticalGenerativeActor.
 
     All model loading (reading manifest.json, importing torch/onnxruntime,
     deserializing the model file) happens once, here, in __init__ - or, with

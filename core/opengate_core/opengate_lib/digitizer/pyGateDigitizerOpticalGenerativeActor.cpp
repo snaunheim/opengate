@@ -94,8 +94,9 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
             return ViewOf(a, IO(a).times);
           })
 
-      // outputs filled by Python, one column per declared model output, each
-      // of length fInputN, in the order of the manifest's 'outputs' list.
+      // outputs filled by Python, one column per model column of the
+      // 'outputs' list, in that order. All columns share one length: at most
+      // fInputN per hit, exactly the batch size when pooling.
       // Taken as arrays and copied in one block per column: converting
       // straight to std::vector<std::vector<double>> would go through one
       // python object per value.

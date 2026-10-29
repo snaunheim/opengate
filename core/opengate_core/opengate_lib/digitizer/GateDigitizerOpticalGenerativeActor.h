@@ -21,10 +21,15 @@ namespace py = pybind11;
 
 /* For every energy-deposition step, the actor samples the number of scintillation photons N
    the way G4Scintillation does (mean edep * scintillation_yield, width broadened by
-   resolution_scale) and calls a generative model once per hit with the batch size being N.
-   The model generates N synthetic particles (e.g. optical photons) records in one call.
+   resolution_scale) and a generative model generates N synthetic particles (e.g. optical
+   photons) for it.
+
+   Without pooling the model is called once per hit, with a batch of N. With pooling
+   (target_batch > 0, a bundle in vector mode) the hits are collected, also across events,
+   and the model is called with exactly target_batch photons. Whatever is left in the pool
+   is generated at the end of the run.
    
-   The precise quantities that are generated can be declared in the bundle manifest which caries
+   The precise quantities that are generated are declared in the bundle manifest, which carries
    additional information about the generative model used.
 */
 

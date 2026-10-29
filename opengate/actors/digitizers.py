@@ -702,23 +702,27 @@ class DigitizerOpticalGenerativeActor(
     DigitizerWithRootOutput, g4.GateDigitizerOpticalGenerativeActor
 ):
     """
-    Actor replaces step-wise optical photon tracking with a pluggable generative model (e.g., UC Davis' OptiGAN) that can synthesize optical photon-like
+    Actor replaces step-wise optical photon tracking with a pluggable generative model that can synthesize optical photon-like
     records in much shorter time. A GPU is in principle not required but highly recommended in order to see a performance gain.
-    The model is conditioned on the spatial coordinates (in the module-local frame) where a hit is recored within a module.
-    Which quantities the model produces is declared in a bundle manifest's 'outputs' list (schema_version 2, see documentation).
+    The model is conditioned on the spatial coordinates (in the module-local frame) where a hit is recorded within a module.
+    Which quantities the model produces is declared in a bundle manifest's 'outputs' list (schema_version 3, see
+    docs/generative_bundle_contract.md).
 
     The generator can be either:
       - an object with a method generate_batch(x, y, z, time, n_photons) -> tuple of arrays, one per
         declared model column, all of the same length. That length may be smaller than n_photons, since
         photons that never reach the sensor produce no row. Such a generator has no manifest, so 'outputs'
-        must declare its schema.
+        must declare its schema. It is always called once per hit.
       - a string/Path to a generative model bundle directory or zip, or an already opened GenerativeModelBundle, in which case
         outputs, local_axes_order and local_position_offset are all auto-configured from the bundle's manifest.
+        The manifest's batch.input_mode decides how the model is called: 'scalar' once per hit, 'vector' with
+        the hits pooled into calls of exactly batch.target_batch photons, also across events unless
+        flush_every_event is set.
 
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
     DigitizerHitsCollectionActor
-    Output: a digi collection with the declared attributes plus SourceHitIndex (the index of the input row that produced each photon).
+    Output: a digi collection with the declared attributes plus SourceHitIndex (identifies the hit that produced each photon, unique across events and threads).
     """
 
     user_info_defaults = {
@@ -731,7 +735,9 @@ class DigitizerOpticalGenerativeActor(
         "generator": (
             None,
             {
-                "doc": "Object/string/Path to a generative model bundle, that has generate_batch(x, y, z, time, n_photons) "
+                "doc": "A generative model bundle (path to a directory or zip, or an opened GenerativeModelBundle), "
+                "or an object with generate_batch(x, y, z, time, n_photons). A bundle is configured from its "
+                "manifest, a plain object needs 'outputs' and is called once per hit.",
             },
         ),
         "outputs": (
@@ -838,8 +844,8 @@ class DigitizerOpticalGenerativeActor(
         if self.user_info.generator is None:
             fatal(
                 f"DigitizerOpticalGenerativeActor '{self.name}' requires a "
-                f"'generator' object implementing "
-                f"generate_batch(x, y, z, time, n_photons)."
+                f"'generator': a generative model bundle, or an object "
+                f"implementing generate_batch(x, y, z, time, n_photons)."
             )
 
         # A bundle path is opened here, the model itself is loaded only in
