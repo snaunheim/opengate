@@ -752,6 +752,14 @@ class DigitizerOpticalGenerativeActor(
                 "doc": "Offset (dx, dy, dz) in mm added to the module-local PostPositionLocalModule coordinates before they are passed to the generator.",
             },
         ),
+        "flush_every_event": (
+            False,
+            {
+                "doc": "Pooled mode only: generate the photons left in the pool at the end of every event "
+                "instead of pooling across events. Required when another digitizer reads this actor's output, "
+                "since that digitizer only sees what is written during its own event. Smaller batches, so slower.",
+            },
+        ),
 
         "optical_properties_file": (
             Path(os.path.dirname(os.path.dirname(__file__)))
@@ -838,6 +846,9 @@ class DigitizerOpticalGenerativeActor(
         # Resolve the output schema and hand it to C++ as flat vectors.
         self._resolve_output_schema()
 
+        # a digitizer reading this output needs complete events
+        self._check_readers()
+
         # Resolve the scintillation yield from the optical properties XML for
         # the material of the attached volume. The volume manager is resolved
         # before the actor manager, so the material is available here.
@@ -885,6 +896,28 @@ class DigitizerOpticalGenerativeActor(
         columns.sort(key=lambda e: e["column_index"])
         self._column_factors = [e["factor"] for e in columns]
         self._column_offsets = [e["offset"] for e in columns]
+
+    def _check_readers(self):
+        # pooled across events, a reader would get photons of other events in
+        # its slice and never see the batch flushed at the end of the run
+        if not self._pooled or self.user_info.flush_every_event:
+            return
+        readers = [
+            a.name
+            for a in self.simulation.actor_manager.actors.values()
+            if a is not self
+            and (
+                a.user_info.get("input_digi_collection") == self.name
+                or self.name in (a.user_info.get("input_digi_collections") or [])
+            )
+        ]
+        if readers:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': {readers} read "
+                f"the output of this actor, but its bundle pools photons across "
+                f"events, so they would get photons of other events and miss the "
+                f"last batch of the run. Set flush_every_event=True."
+            )
 
     def _resolve_scintillation_yield(self):
         volume = self.simulation.volume_manager.get_volume(self.attached_to)

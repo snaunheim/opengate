@@ -38,6 +38,7 @@ void GateDigitizerOpticalGenerativeActor::InitializeUserInfo(
 
   fTargetBatch = DictGetInt(user_info, "_target_batch");
   fPooling = fTargetBatch > 0;
+  fFlushEveryEvent = DictGetBool(user_info, "flush_every_event");
 
   const auto n = fOutputAttributeNames.size();
   if (fOutputComponents.size() != n || fOutputColumnIndices.size() != n ||
@@ -300,6 +301,10 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
     }
     iter++;
   }
+
+  // nothing of this event may wait in the pool for a digitizer reading it
+  if (fPooling && fFlushEveryEvent)
+    FlushBatch(l, l.pooledPhotons);
 }
 
 long GateDigitizerOpticalGenerativeActor::SamplePhotonCount(double edep) const {

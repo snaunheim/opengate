@@ -170,6 +170,9 @@ protected:
   // photons per pooled call; 0 means no pooling, one call per hit
   long fTargetBatch{0};
   bool fPooling{false};
+  // empty the pool at the end of every event, so a digitizer reading this
+  // output gets all photons of an event within that event
+  bool fFlushEveryEvent{false};
 
   // every thread numbers its hits from its own offset, so a SourceHitIndex
   // belongs to one hit

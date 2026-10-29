@@ -28,7 +28,7 @@ With `input_mode: "scalar"` the model is called once per hit:
 
 A model that was never trained on timing information is allowed to ignore `time` internally, but the function signature must still accept it, the actor always passes five arguments.
 
-With `input_mode: "vector"` the actor collects photons and calls the model with exactly `target_batch` of them, so one call usually covers several hits and, since the pool is not emptied per event, several events. A hit can be split across two calls. Only the last call of a run is smaller:
+With `input_mode: "vector"` the actor collects photons and calls the model with exactly `target_batch` of them, so one call usually covers several hits and, since the pool is not emptied per event, several events. A hit can be split across two calls. Only the last call of a run is smaller. If another digitizer reads the actor's output, the actor's `flush_every_event` has to be set: the pool is then emptied at the end of every event, so that digitizer gets all photons of an event within that event:
 
 | name | type | units | meaning |
 |---|---|---|---|
