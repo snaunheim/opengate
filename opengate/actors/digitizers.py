@@ -1083,7 +1083,10 @@ class DigitizerOpticalGenerativeActor(
         g4.GateDigitizerOpticalGenerativeActor.StartSimulationAction(self)
 
     def EndSimulationAction(self):
+        # Keep this trampoline thin: do not put functional Python logic here.
+        # Concrete Python-side finalization belongs in end_simulation_action().
         g4.GateDigitizerOpticalGenerativeActor.EndSimulationAction(self)
+        DigitizerBase.EndSimulationAction(self)
 
 
 class DigitizerPileupActor(DigitizerWithRootOutput, g4.GateDigitizerPileupActor):
