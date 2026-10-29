@@ -820,6 +820,15 @@ class DigitizerOpticalGenerativeActor(
         g4.GateDigitizerOpticalGenerativeActor.__init__(self, self.user_info)
         self.AddActions({"StartSimulationAction", "EndSimulationAction"})
 
+    def to_dictionary(self):
+        d = super().to_dictionary()
+        # an opened bundle is stored by its path and opened again when the
+        # simulation is read back, e.g. in a split job
+        generator = self.user_info.generator
+        if isinstance(generator, GenerativeModelBundle):
+            d["user_info"]["generator"] = generator.bundle_path.resolve()
+        return d
+
     def resolve_and_validate_config(self, context=None):
         # Validate everything that does not need the Geant4 runtime, so a
         # misconfigured actor fails before the engine starts (and before a
