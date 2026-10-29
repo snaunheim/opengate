@@ -276,9 +276,9 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
         io.n = N;
 
         {
-          // the generator is python, so it needs the gil; in MT every worker
-          // calls it for its own hits
-          py::gil_scoped_acquire acquire;
+          // the generator is python, pybind's std::function wrapper takes
+          // the gil itself (pybind11/functional.h)
+          // py::gil_scoped_acquire acquire;
           fGenerator(this); // fills io.columns, one vector per model column
         }
 
@@ -412,8 +412,8 @@ void GateDigitizerOpticalGenerativeActor::FlushBatch(threadLocalT &l, long n) {
   }
 
   {
-    // see EndOfEventAction: the generator is python and needs the gil
-    py::gil_scoped_acquire acquire;
+    // see EndOfEventAction, pybind takes the gil itself
+    // py::gil_scoped_acquire acquire;
     fGenerator(this);  // reads the pooled input, fills the columns
   }
   const long nRows = CheckOutputColumns(n);
