@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from .exception import GateMergeError
-from .rootio import RootMergeFileWriter
 
 
 class _CoordinatorOutputMergeContext:
@@ -196,8 +195,10 @@ class RootMergeCoordinator:
                     )
 
     def finalize_merge(self):
+        from .npyio import create_merge_file_writer
+
         for output_path, grouped_outputs in self._root_output_groups.items():
-            writer = RootMergeFileWriter(output_path)
+            writer = create_merge_file_writer(output_path)
             writer.open()
             try:
                 event_id_states_by_tree = {}
