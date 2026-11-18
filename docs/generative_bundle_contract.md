@@ -51,7 +51,7 @@ A bundle is either a directory or a zip file containing a manifest and the seria
 ```
 my_bundle/
   manifest.json
-  model.onnx          # or model.pt (TorchScript), or a directory of AOTInductor artifacts
+  model.onnx          # or model.pt (TorchScript)
 ```
 
 `GenerativeModelBundle` opens the directory or zip file and reads `manifest.json` from the root. The entry `model_file` in the manifest declares the model file that should be used.
@@ -89,7 +89,7 @@ This is an example.
 
 **`schema_version`**: The current version is `3`.
 
-**`format`**: Needs to be either `"torchscript"`, `"onnx"`, or `"aotinductor"`. It selects which loader is used. Attention: Only ONNX shipped models have been tested extensively so far.
+**`format`**: Needs to be either `"torchscript"` or `"onnx"`. It selects which loader is used. Attention: Only ONNX shipped models have been tested extensively so far.
 
 **`model_file`**: Path to the model file, relative to the bundle root.
 

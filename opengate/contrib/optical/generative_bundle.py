@@ -8,7 +8,7 @@ from opengate.exception import fatal, warning
 from opengate.utility import g4_units
 
 SUPPORTED_SCHEMA_VERSION = 3
-SUPPORTED_FORMATS = ("torchscript", "onnx", "aotinductor")
+SUPPORTED_FORMATS = ("torchscript", "onnx")
 
 # How the model takes its conditioning. 'scalar' is the version 2 signature:
 # one position per call plus a carrier array whose length sets the batch size.
@@ -240,8 +240,6 @@ class GenerativeModelBundle:
             return self._load_torchscript_model()
         if fmt == "onnx":
             return self._load_onnx_model()
-        if fmt == "aotinductor":
-            return self._load_aotinductor_model()
         fatal(f"Unknown generative model bundle format '{fmt}'.")
 
     def _load_torchscript_model(self):
@@ -304,30 +302,6 @@ class GenerativeModelBundle:
             )
         return session
 
-    def _load_aotinductor_model(self):
-        try:
-            import torch
-        except ImportError:
-            fatal(
-                f"Generative model bundle '{self.bundle_path}' requires torch "
-                f"(format='aotinductor'), but torch is not installed."
-            )
-        if self._zip is not None:
-            fatal(
-                f"Generative model bundle '{self.bundle_path}': format "
-                f"'aotinductor' requires a directory bundle (the compiled "
-                f".so cannot be loaded from within a zip)."
-            )
-        model_path = self.bundle_path / self.manifest["model_file"]
-        if not model_path.exists():
-            fatal(
-                f"Generative model bundle '{self.bundle_path}' manifest "
-                f"declares model_file='{self.manifest['model_file']}', but "
-                f"that file does not exist."
-            )
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        return torch._export.aot_load(str(model_path), device=device)
-
     # -- coordinate convention ------------------------------------------
 
     def expected_local_axes_order(self):
@@ -386,7 +360,7 @@ class GenerativeModelBundle:
                 f"one position per call and only applies to "
                 f"input_mode={INPUT_MODE_SCALAR!r}. Use generate_pooled()."
             )
-        if self.format == "torchscript" or self.format == "aotinductor":
+        if self.format == "torchscript":
             return self._generate_batch_torch(x, y, z, time, n_photons)
         if self.format == "onnx":
             return self._generate_batch_onnx(x, y, z, time, n_photons)
@@ -416,7 +390,7 @@ class GenerativeModelBundle:
                 f"was given conditioning arrays of differing lengths "
                 f"({sorted(lengths)}). All four must have one entry per photon."
             )
-        if self.format == "torchscript" or self.format == "aotinductor":
+        if self.format == "torchscript":
             return self._generate_pooled_torch(x, y, z, time)
         if self.format == "onnx":
             return self._generate_pooled_onnx(x, y, z, time)
