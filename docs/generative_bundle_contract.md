@@ -14,6 +14,8 @@ To correctly reproduce light-sharing characteristics and similar effects, a gene
 
 The model does not decide how many photons a hit emits, the actor does. It draws the count the same way `G4Scintillation` does in a full optical simulation: the mean is `TotalEnergyDeposit × SCINTILLATIONYIELD`, and for a mean above 10 the count comes from a Gaussian of width `RESOLUTIONSCALE × √mean`, below that from a Poisson distribution. Both values are read from `optical_properties_file` for the material of the attached volume, so the photon statistics match a full simulation with the same material database. The model then only has to describe where each photon ends up.
 
+Due to geometric efficiency, not all emitted photons reach the sensor surface. If the bundle holds an efficiency map, the actor uses the map to draw from a binomial distribution the number of photons reaching the sensor.
+
 ### Inputs
 
 How the conditioning reaches the model depends on `batch.input_mode`.
@@ -24,7 +26,7 @@ With `input_mode: "scalar"` the model is called once per hit:
 |---|---|---|---|
 | `x, y, z` | float | as declared in `coordinates.unit` | energy-deposition position, in the array-local frame, axis order and offset as declared in `coordinates` (see below) |
 | `time` | float | ns | global time of the energy deposition |
-| `n_photons` | int | n/a | number of photons being emitted for this hit, already sampled by the actor; always ≥ 1 |
+| `n_photons` | int | n/a | number of photons of this hit, already sampled by the actor (and reduced by the efficiency map, if any); always ≥ 1 |
 
 A model that was never trained on timing information is allowed to ignore `time` internally, but the function signature must still accept it, the actor always passes five arguments.
 
@@ -52,6 +54,7 @@ A bundle is either a directory or a zip file containing a manifest and the seria
 my_bundle/
   manifest.json
   model.onnx          # or model.pt (TorchScript)
+  efficiency.npz      # optional, see "Efficiency Map"
 ```
 
 `GenerativeModelBundle` opens the directory or zip file and reads `manifest.json` from the root. The entry `model_file` in the manifest declares the model file that should be used.
@@ -83,7 +86,9 @@ This is an example.
   },
   "training": {"crystal_size_mm": [3.0, 3.0, 10.0], "material": "BGO", "module_configuration":"3x3"},
 
-  "batch": {"input_mode": "vector", "target_batch": 50000}
+  "batch": {"input_mode": "vector", "target_batch": 50000},
+
+  "efficiency": {"file": "efficiency.npz", "interpolation": ["nearest", "linear", "nearest"]}
 }
 ```
 
@@ -109,6 +114,16 @@ This is an example.
   - Vector mode: the exact number of samples per call. `null` or left out means 50000.
 
   Use it to keep a call within the GPU memory. Smaller calls cost more time, since each call carries its own overhead.
+
+**`efficiency`**: Optional, see below.
+
+### Efficiency Map
+
+The map gives the efficiency for points (x, y, z) in the module: the probability that a photon released there reaches the sensor. x, y and z are in the model's coordinates, like the inputs (`axes_order`, `offset`, `unit`).
+
+`efficiency.npz` stores the x, y and z values of the grid as three arrays, named as in `axes_order`, and the efficiencies in `efficiency`, where `efficiency[i, j, k]` belongs to the point (x[i], y[j], z[k]).
+
+Between the points, `interpolation` decides per axis: `"linear"` or `"nearest"`. Outside the grid the edge value is used. For a crystal array, use one point per crystal center with `"nearest"`, so the efficiency stays constant inside each crystal.
 
 ### The Outputs List
 `outputs` declares the columns being used. **The order of the list is the order in which the model returns its columns**, so no second mapping table is needed. Names and types are checked against `GateDigiAttributeManager` itself, not against a list maintained in OpenGATE, so the schema cannot go stale when GATE gains new attributes.

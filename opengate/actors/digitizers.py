@@ -719,6 +719,9 @@ class DigitizerOpticalGenerativeActor(
         the hits pooled into calls of exactly batch.target_batch photons, also across events unless
         flush_every_event is set.
 
+    If the bundle has an efficiency map, the number of photons per hit is reduced with a binomial draw before
+    the model is called.
+
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
     DigitizerHitsCollectionActor
@@ -764,6 +767,13 @@ class DigitizerOpticalGenerativeActor(
                 "doc": "Pooled mode only: generate the photons left in the pool at the end of every event "
                 "instead of pooling across events. Required when another digitizer reads this actor's output, "
                 "since that digitizer only sees what is written during its own event. Smaller batches, so slower.",
+            },
+        ),
+        "efficiency_scale": (
+            1.0,
+            {
+                "doc": "Multiplies the bundle's efficiency map, e.g. for the PDE of the sensor. "
+                "Without a map it is the efficiency itself.",
             },
         ),
 
@@ -819,6 +829,8 @@ class DigitizerOpticalGenerativeActor(
         # set for a bundle whose model takes per-photon conditioning, which
         # lets the actor pool several hits into one call
         self._pooled = False
+        # arguments of SetEfficiencyMap, None keeps every released photon
+        self._efficiency_map = None
         DigitizerBase.__init__(self, *args, **kwargs)
         self.__initcpp__()
 
@@ -860,6 +872,9 @@ class DigitizerOpticalGenerativeActor(
 
         # Resolve the output schema and hand it to C++ as flat vectors.
         self._resolve_output_schema()
+
+        # needs the coordinates resolved above
+        self._resolve_efficiency()
 
         # a digitizer reading this output needs complete events
         self._check_readers()
@@ -911,6 +926,49 @@ class DigitizerOpticalGenerativeActor(
         columns.sort(key=lambda e: e["column_index"])
         self._column_factors = [e["factor"] for e in columns]
         self._column_offsets = [e["offset"] for e in columns]
+
+    def _resolve_efficiency(self):
+        # C++ looks the map up at PostPositionLocalModule, so it goes into
+        # GATE's module frame here
+        scale = self.user_info.efficiency_scale
+        if not isinstance(scale, (int, float)) or scale < 0:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': efficiency_scale="
+                f"{scale!r}, it must be a number >= 0."
+            )
+        generator = self.user_info.generator
+        efficiency = (
+            generator.efficiency
+            if isinstance(generator, GenerativeModelBundle)
+            else None
+        )
+        if efficiency is None:
+            if scale == 1:
+                self._efficiency_map = None
+                return
+            # no map, so one value everywhere
+            axes = [np.zeros(1)] * 3
+            values = np.full((1, 1, 1), float(scale))
+            nearest = [True] * 3
+        else:
+            # model axis m is (local[ax[m]] + off[m]) / f, see _call_generator
+            ax = self.user_info.local_axes_order
+            off = self.user_info.local_position_offset
+            f = self._coordinate_factor
+            model_axis = [ax.index(g) for g in range(3)]
+            axes = [efficiency["axes"][m] * f - off[m] for m in model_axis]
+            values = np.transpose(efficiency["values"], model_axis) * scale
+            nearest = [efficiency["interpolation"][m] == "nearest" for m in model_axis]
+        if values.max() > 1:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': efficiency_scale="
+                f"{scale} lifts the efficiency above 1 (up to {values.max():.3g})."
+            )
+        self._efficiency_map = (
+            *[a.tolist() for a in axes],
+            values.ravel().tolist(),
+            nearest,
+        )
 
     def _check_readers(self):
         # pooled across events, a reader would get photons of other events in
@@ -1092,6 +1150,8 @@ class DigitizerOpticalGenerativeActor(
             self.user_info.generator.load_model()
         self.fScintillationYield = self._scintillation_yield
         self.fResolutionScale = self._resolution_scale
+        if self._efficiency_map is not None:
+            self.SetEfficiencyMap(*self._efficiency_map)
         self.SetGeneratorFunction(
             self._call_pooled_generator if self._pooled else self._call_generator
         )

@@ -11,6 +11,7 @@
 #include "../GateUniqueVolumeID.h"
 #include "GateVDigitizerWithOutputActor.h"
 #include <G4Cache.hh>
+#include <array>
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -29,6 +30,8 @@ namespace py = pybind11;
    and the model is called with exactly target_batch photons. Whatever is left in the pool
    is generated at the end of the run.
    
+   With an efficiency map, N is reduced with a binomial draw before the model is called.
+
    The precise quantities that are generated are declared in the bundle manifest, which carries
    additional information about the generative model used.
 */
@@ -63,6 +66,14 @@ public:
 
   // RESOLUTIONSCALE of the material, widens the spread of N
   double fResolutionScale{1.0};
+
+  // probability to reach the sensor on a grid in the module-local frame,
+  // values with z running fastest
+  void SetEfficiencyMap(const std::vector<double> &axisX,
+                        const std::vector<double> &axisY,
+                        const std::vector<double> &axisZ,
+                        const std::vector<double> &values,
+                        const std::vector<bool> &nearest);
 
   // What the generator reads and writes. One set per worker thread, since in
   // MT every thread calls the generator for its own hits.
@@ -210,6 +221,17 @@ protected:
 
   // photon count for one hit, as G4Scintillation draws it; may be <= 0
   long SamplePhotonCount(double edep) const;
+
+  // see SetEfficiencyMap; no values means every photon is kept
+  std::array<std::vector<double>, 3> fEfficiencyAxes;
+  std::vector<double> fEfficiencyValues;
+  std::array<bool, 3> fEfficiencyNearest{};
+
+  // the map at a module-local position
+  double EfficiencyAt(const G4ThreeVector &position) const;
+
+  // how many of n released photons reach the sensor from this position
+  long ReducePhotonCount(long n, const G4ThreeVector &position) const;
 
   // append one hit to the pool and call the generator for every full batch
   void PoolHit(threadLocalT &l, long nPhotons, double sourceHitIndex);

@@ -11,6 +11,7 @@
 #include "GateDigiCollectionManager.h"
 #include "GateHelpersDigitizer.h"
 #include "GateTDigiAttribute.h"
+#include <CLHEP/Random/RandBinomial.h>
 #include <G4Poisson.hh>
 #include <Randomize.hh>
 #include <algorithm>
@@ -71,6 +72,27 @@ void GateDigitizerOpticalGenerativeActor::InitializeUserInfo(
 void GateDigitizerOpticalGenerativeActor::SetGeneratorFunction(
     GeneratorType &f) {
   fGenerator = f;
+}
+
+void GateDigitizerOpticalGenerativeActor::SetEfficiencyMap(
+    const std::vector<double> &axisX, const std::vector<double> &axisY,
+    const std::vector<double> &axisZ, const std::vector<double> &values,
+    const std::vector<bool> &nearest) {
+  // python checks the map already, this only guards the lookup
+  fEfficiencyAxes = {axisX, axisY, axisZ};
+  size_t n = 1;
+  for (const auto &axis : fEfficiencyAxes) {
+    if (axis.empty() || !std::is_sorted(axis.begin(), axis.end()))
+      Fatal("GateDigitizerOpticalGenerativeActor: every axis of the "
+            "efficiency map needs at least one value, in increasing order.");
+    n *= axis.size();
+  }
+  if (values.size() != n || nearest.size() != 3)
+    Fatal("GateDigitizerOpticalGenerativeActor: the efficiency map does not "
+          "match the size of its axes.");
+  fEfficiencyValues = values;
+  for (size_t i = 0; i < 3; i++)
+    fEfficiencyNearest[i] = nearest[i];
 }
 
 void GateDigitizerOpticalGenerativeActor::StartSimulationAction() {
@@ -258,7 +280,10 @@ void GateDigitizerOpticalGenerativeActor::EndOfEventAction(
 
   while (!iter.IsAtEnd()) {
     if (*l.edep > 0) {
-      const long N = SamplePhotonCount(*l.edep);
+      long N = SamplePhotonCount(*l.edep);
+      // only the photons that reach the sensor are generated
+      if (N > 0 && !fEfficiencyValues.empty())
+        N = ReducePhotonCount(N, *l.pos);
 
       const auto sourceHitIndex =
           static_cast<double>(l.threadIndexOffset + l.nHitsProcessed);
@@ -315,6 +340,66 @@ long GateDigitizerOpticalGenerativeActor::SamplePhotonCount(double edep) const {
     return static_cast<long>(G4RandGauss::shoot(mean, sigma) + 0.5);
   }
   return static_cast<long>(G4Poisson(mean));
+}
+
+namespace {
+// the two grid points around v on one axis and the weight of the second.
+// nearest gives one point, beyond the ends the end point is used.
+void AxisNeighbours(const std::vector<double> &axis, double v, bool nearest,
+                    size_t &i0, size_t &i1, double &w1) {
+  w1 = 0.;
+  if (v <= axis.front()) {
+    i0 = i1 = 0;
+    return;
+  }
+  if (v >= axis.back()) {
+    i0 = i1 = axis.size() - 1;
+    return;
+  }
+  i1 = std::upper_bound(axis.begin(), axis.end(), v) - axis.begin();
+  i0 = i1 - 1;
+  const double t = (v - axis[i0]) / (axis[i1] - axis[i0]);
+  if (nearest)
+    i0 = i1 = (t < 0.5) ? i0 : i1;
+  else
+    w1 = t;
+}
+} // namespace
+
+double GateDigitizerOpticalGenerativeActor::EfficiencyAt(
+    const G4ThreeVector &position) const {
+  size_t i[3][2];
+  double w[3];
+  for (int a = 0; a < 3; a++)
+    AxisNeighbours(fEfficiencyAxes[a], position[a], fEfficiencyNearest[a],
+                   i[a][0], i[a][1], w[a]);
+  const auto ny = fEfficiencyAxes[1].size();
+  const auto nz = fEfficiencyAxes[2].size();
+  double efficiency = 0.;
+  for (int cx = 0; cx < 2; cx++)
+    for (int cy = 0; cy < 2; cy++)
+      for (int cz = 0; cz < 2; cz++) {
+        const double weight = (cx ? w[0] : 1. - w[0]) *
+                              (cy ? w[1] : 1. - w[1]) *
+                              (cz ? w[2] : 1. - w[2]);
+        if (weight > 0.)
+          efficiency +=
+              weight * fEfficiencyValues[(i[0][cx] * ny + i[1][cy]) * nz +
+                                         i[2][cz]];
+      }
+  return efficiency;
+}
+
+long GateDigitizerOpticalGenerativeActor::ReducePhotonCount(
+    long n, const G4ThreeVector &position) const {
+  // each photon arrives on its own, so the count is binomial
+  const double p = EfficiencyAt(position);
+  if (p <= 0.)
+    return 0;
+  if (p >= 1.)
+    return n;
+  return std::lround(
+      CLHEP::RandBinomial::shoot(G4Random::getTheEngine(), n, p));
 }
 
 long GateDigitizerOpticalGenerativeActor::CheckOutputColumns(long nAsked) {

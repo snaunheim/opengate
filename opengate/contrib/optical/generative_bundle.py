@@ -1,3 +1,4 @@
+import io
 import json
 import zipfile
 from pathlib import Path
@@ -42,6 +43,9 @@ DERIVED_FROM_HIT = "from_hit"
 FROM_HIT_ATTRIBUTES = ("PreStepUniqueVolumeID", "EventID")
 
 SUPPORTED_DERIVATIONS = (DERIVED_WORLD_FROM_MODULE, DERIVED_FROM_HIT)
+
+# how the efficiency map is read between its grid points, per axis
+SUPPORTED_INTERPOLATIONS = ("nearest", "linear")
 
 
 def unit_factor(unit, what, bundle_path):
@@ -96,6 +100,8 @@ class GenerativeModelBundle:
         self.format = self.manifest["format"]
         self.coordinates = self.manifest["coordinates"]
         self.outputs = validate_outputs(self.manifest["outputs"], self.bundle_path)
+        # small, so it is read and checked here even when the model is deferred
+        self.efficiency = self._load_efficiency()
         self._model = None if defer_model_load else self._load_model()
 
     def load_model(self):
@@ -202,6 +208,66 @@ class GenerativeModelBundle:
                 f"whole number, or null for the default."
             )
 
+    def _load_efficiency(self):
+        """
+        The optional efficiency map in the model's coordinates, or None.
+        A dict with the axes, the values and the interpolation per axis.
+        """
+        entry = self.manifest.get("efficiency")
+        if entry is None:
+            return None
+        where = f"Generative model bundle '{self.bundle_path}': efficiency"
+        if not isinstance(entry, dict) or "file" not in entry:
+            fatal(f"{where} must be a dict with at least a 'file'.")
+        interpolation = entry.get("interpolation")
+        if (
+            not isinstance(interpolation, list)
+            or len(interpolation) != 3
+            or any(i not in SUPPORTED_INTERPOLATIONS for i in interpolation)
+        ):
+            fatal(
+                f"{where}.interpolation={interpolation!r}; expected one of "
+                f"{SUPPORTED_INTERPOLATIONS} per axis, in the order of "
+                f"coordinates.axes_order."
+            )
+
+        # a bundle may come from elsewhere, so no pickled objects
+        data = np.load(
+            io.BytesIO(self._read_bundle_bytes(entry["file"], "efficiency.file")),
+            allow_pickle=False,
+        )
+        axes_order = self.coordinates["axes_order"]
+        missing = [k for k in (*axes_order, "efficiency") if k not in data.files]
+        if missing:
+            fatal(
+                f"{where} file '{entry['file']}' lacks the arrays {missing}; it "
+                f"needs one array per axis named as in coordinates.axes_order, "
+                f"plus 'efficiency'."
+            )
+        axes = []
+        for name in axes_order:
+            axis = np.asarray(data[name], dtype=np.float64)
+            if (
+                axis.ndim != 1
+                or len(axis) == 0
+                or not np.all(np.isfinite(axis))
+                or np.any(np.diff(axis) <= 0)
+            ):
+                fatal(
+                    f"{where}: the axis '{name}' must be a 1-D array of strictly "
+                    f"increasing numbers."
+                )
+            axes.append(axis)
+        values = np.asarray(data["efficiency"], dtype=np.float64)
+        if values.shape != tuple(len(a) for a in axes):
+            fatal(
+                f"{where}: 'efficiency' has shape {values.shape}, but its axes "
+                f"{axes_order} have {[len(a) for a in axes]} values."
+            )
+        if not np.all(np.isfinite(values)) or values.min() < 0 or values.max() > 1:
+            fatal(f"{where}: every value must be a probability between 0 and 1.")
+        return {"axes": axes, "values": values, "interpolation": interpolation}
+
     @property
     def input_mode(self):
         """
@@ -222,17 +288,18 @@ class GenerativeModelBundle:
     # -- model loading --------------------------------------------------
 
     def _read_model_bytes(self):
-        model_file = self.manifest["model_file"]
+        return self._read_bundle_bytes(self.manifest["model_file"], "model_file")
+
+    def _read_bundle_bytes(self, name, field):
         if self._zip is not None:
-            return self._zip.read(model_file)
-        model_path = self.bundle_path / model_file
-        if not model_path.exists():
+            return self._zip.read(name)
+        path = self.bundle_path / name
+        if not path.exists():
             fatal(
                 f"Generative model bundle '{self.bundle_path}' manifest "
-                f"declares model_file='{model_file}', but that file does not "
-                f"exist."
+                f"declares {field}='{name}', but that file does not exist."
             )
-        return model_path.read_bytes()
+        return path.read_bytes()
 
     def _load_model(self):
         fmt = self.format

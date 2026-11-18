@@ -42,6 +42,8 @@ void init_GateDigitizerOpticalGenerativeActor(py::module &m) {
       .def(py::init<py::dict &>())
       .def("SetGeneratorFunction",
            &GateDigitizerOpticalGenerativeActor::SetGeneratorFunction)
+      .def("SetEfficiencyMap",
+           &GateDigitizerOpticalGenerativeActor::SetEfficiencyMap)
 
       .def_readwrite("fScintillationYield",
                      &GateDigitizerOpticalGenerativeActor::fScintillationYield)
