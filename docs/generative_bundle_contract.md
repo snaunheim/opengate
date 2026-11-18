@@ -47,6 +47,19 @@ The model returns multiple one-dimensional arrays, each 1-D sequence should be i
 
 The output digi collection carries the declared attributes under their GATE names (so a `PostPositionLocalModule` entry appears as the branches `PostPositionLocalModule_X/_Y/_Z`), plus `SourceHitIndex`, a number that identifies the hit each photon came from, unique across events and threads.
 
+### Reproducibility
+
+The hits, the photon counts and the efficiency draws come from Geant4's generator, so they follow the GATE seed for every format. The noise a model draws inside its graph (e.g. `RandomNormalLike`) does not. For an ONNX bundle the actor therefore seeds onnxruntime from the GATE seed (`sim.random_seed`, or the seed drawn for `"auto"`) before it builds the session, and a second run with the same seed gives the same photons, bit for bit. TorchScript bundles are not seeded.
+
+This only holds for:
+- the same hardware, execution provider and onnxruntime version. CPU and CUDA give different photons for the same seed.
+- the same batches. Pooled and `flush_every_event` cut the photons into different calls and so give different photons, as does another `target_batch`.
+- one thread. With several threads the workers call the model in a different order every run. That works, but is not reproducible.
+
+onnxruntime has one generator per process. Each actor derives its own seed from the GATE seed and its name, so two actors get different noise, and a renamed actor gets other noise. On CUDA, all actors draw from the one generator in the order of their calls, which is fixed with one thread. The seed is set once per simulation, so the noise continues across runs. Every split job has its own GATE seed and so its own noise.
+
+A random node with its own `seed` attribute keeps that seed, so every GATE seed would get the same noise. Export the model without one.
+
 ## Bundle Layout
 
 A bundle is either a directory or a zip file containing a manifest and the serialized model it describes.

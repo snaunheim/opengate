@@ -104,9 +104,17 @@ class GenerativeModelBundle:
         self.efficiency = self._load_efficiency()
         self._model = None if defer_model_load else self._load_model()
 
-    def load_model(self):
-        """Deserialize the model if it was not loaded in __init__. Idempotent."""
-        if self._model is None:
+    def load_model(self, seed=None):
+        """
+        Deserialize the model if it was not loaded in __init__. Idempotent.
+
+        seed: ONNX only, seeds onnxruntime for the noise drawn in the graph.
+        The session is then always built again, since its CPU kernels read
+        the seed when they are built. Other formats ignore it.
+        """
+        if seed is not None and self.format == "onnx":
+            self._model = self._load_onnx_model(seed)
+        elif self._model is None:
             self._model = self._load_model()
 
     def close(self):
@@ -343,7 +351,7 @@ class GenerativeModelBundle:
         model.eval()
         return model
 
-    def _load_onnx_model(self):
+    def _load_onnx_model(self, seed=None):
         try:
             import onnxruntime
         except ImportError:
@@ -352,6 +360,9 @@ class GenerativeModelBundle:
                 f"onnxruntime (format='onnx'), but onnxruntime is not "
                 f"installed."
             )
+        # global for the process; must come before the session is built
+        if seed is not None:
+            onnxruntime.set_seed(seed)
         requested = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         session = onnxruntime.InferenceSession(
             self._read_model_bytes(), providers=requested

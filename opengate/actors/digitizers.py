@@ -1,4 +1,5 @@
 from typing import List
+import hashlib
 import os
 import numpy as np
 from pathlib import Path
@@ -722,6 +723,9 @@ class DigitizerOpticalGenerativeActor(
     If the bundle has an efficiency map, the number of photons per hit is reduced with a binomial draw before
     the model is called.
 
+    For an ONNX bundle, the noise drawn inside the model is seeded from the GATE seed, so a run with one thread
+    on the same hardware gives the same photons again (see docs/generative_bundle_contract.md).
+
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
     DigitizerHitsCollectionActor
@@ -1140,6 +1144,14 @@ class DigitizerOpticalGenerativeActor(
 
         self._coordinate_factor = bundle.coordinate_unit_factor()
 
+    def _onnx_seed(self):
+        # Hashed, because onnxruntime's CPU kernels use seed + node index, so
+        # split jobs (seed + job index) would share noise. The name keeps two
+        # actors apart.
+        seed = self.actor_engine.simulation_engine.current_random_seed
+        digest = hashlib.sha256(f"{seed}/{self.name}".encode()).digest()
+        return int.from_bytes(digest[:8], "little") >> 1
+
     def StartSimulationAction(self):
         DigitizerBase.StartSimulationAction(self)
 
@@ -1147,7 +1159,7 @@ class DigitizerOpticalGenerativeActor(
             self.resolve_and_validate_config()
         # Deserialize the model now (GPU session, torch/onnxruntime import).
         if isinstance(self.user_info.generator, GenerativeModelBundle):
-            self.user_info.generator.load_model()
+            self.user_info.generator.load_model(seed=self._onnx_seed())
         self.fScintillationYield = self._scintillation_yield
         self.fResolutionScale = self._resolution_scale
         if self._efficiency_map is not None:
