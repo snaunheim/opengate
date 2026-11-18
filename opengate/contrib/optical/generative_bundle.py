@@ -120,6 +120,19 @@ class GenerativeModelBundle:
     def __exit__(self, *exc_info):
         self.close()
 
+    # the loaded model and an open zip cannot be pickled, e.g. when a run in
+    # its own process sends the actors back. load_model() loads it again.
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_model"] = None
+        state["_zip"] = self._zip is not None
+        return state
+
+    def __setstate__(self, state):
+        reopen_zip = state.pop("_zip")
+        self.__dict__.update(state)
+        self._zip = zipfile.ZipFile(self.bundle_path) if reopen_zip else None
+
     # -- manifest -----------------------------------------------------
 
     def _load_manifest(self):
