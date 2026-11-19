@@ -166,6 +166,8 @@ protected:
   static constexpr const char *fModuleLocalAttributeName =
       "PostPositionLocalModule";
 
+  // false if skip_attributes has SourceHitIndex
+  bool fWriteSourceHitIndex{true};
   GateVDigiAttribute *fOutputSourceHitIndexAttribute{};
 
   // one pooled hit. the generator only gets position and time, the rest is

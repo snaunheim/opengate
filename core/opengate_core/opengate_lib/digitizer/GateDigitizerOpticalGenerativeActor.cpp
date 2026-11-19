@@ -40,6 +40,11 @@ void GateDigitizerOpticalGenerativeActor::InitializeUserInfo(
   fTargetBatch = DictGetInt(user_info, "_target_batch");
   fPooling = fTargetBatch > 0;
   fFlushEveryEvent = DictGetBool(user_info, "flush_every_event");
+  // python allows only SourceHitIndex in skip_attributes
+  fWriteSourceHitIndex =
+      std::find(fUserSkipDigiAttributeNames.begin(),
+                fUserSkipDigiAttributeNames.end(),
+                "SourceHitIndex") == fUserSkipDigiAttributeNames.end();
 
   const auto n = fOutputAttributeNames.size();
   if (fOutputComponents.size() != n || fOutputColumnIndices.size() != n ||
@@ -119,8 +124,9 @@ void GateDigitizerOpticalGenerativeActor::StartSimulationAction() {
       fOutputDigiCollection->InitDigiAttributeFromName(name);
   }
   // Not part of the schema: the actor produces it itself.
-  fOutputDigiCollection->InitDigiAttribute(
-      new GateTDigiAttribute<double>("SourceHitIndex"));
+  if (fWriteSourceHitIndex)
+    fOutputDigiCollection->InitDigiAttribute(
+        new GateTDigiAttribute<double>("SourceHitIndex"));
 
   fOutputDigiCollection->RootInitializeTupleForMaster();
   // Since we do not call GateVDigitizerWithOutputActor::StartSimulationAction,
@@ -227,7 +233,9 @@ void GateDigitizerOpticalGenerativeActor::DigitInitialize(
   }
 
   fOutputSourceHitIndexAttribute =
-      fOutputDigiCollection->GetDigiAttribute("SourceHitIndex");
+      fWriteSourceHitIndex
+          ? fOutputDigiCollection->GetDigiAttribute("SourceHitIndex")
+          : nullptr;
 
   // every 'I' target reads its value through a slot of its own
   for (size_t i = 0; i < fFromHitTargets.size(); i++) {
@@ -570,7 +578,8 @@ void GateDigitizerOpticalGenerativeActor::FillPhotons(const PooledHit &hit,
       else
         target.attribute->FillIValue(hit.fromHitInts[k]);
     }
-    fOutputSourceHitIndexAttribute->FillDValue(hit.sourceHitIndex);
+    if (fOutputSourceHitIndexAttribute != nullptr)
+      fOutputSourceHitIndexAttribute->FillDValue(hit.sourceHitIndex);
   }
 }
 

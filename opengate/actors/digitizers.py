@@ -729,7 +729,8 @@ class DigitizerOpticalGenerativeActor(
 
     Input: a digi collection with at least TotalEnergyDeposit, PostPositionLocalModule and GlobalTime attributes (e.g. the output of a
     DigitizerHitsCollectionActor
-    Output: a digi collection with the declared attributes plus SourceHitIndex (identifies the hit that produced each photon, unique across events and threads).
+    Output: a digi collection with the declared attributes plus SourceHitIndex (identifies the hit that produced each photon, unique across events and threads),
+    unless skip_attributes lists it.
     """
 
     user_info_defaults = {
@@ -793,7 +794,8 @@ class DigitizerOpticalGenerativeActor(
         "skip_attributes": (
             [],
             {
-                "doc": "Attributes to be omitted from the output.",
+                "doc": "Attributes to leave out of the output. Only 'SourceHitIndex' is allowed, "
+                "the others are set by 'outputs' or the bundle's manifest.",
             },
         ),
         "clear_every": (
@@ -876,6 +878,15 @@ class DigitizerOpticalGenerativeActor(
 
         # Resolve the output schema and hand it to C++ as flat vectors.
         self._resolve_output_schema()
+
+        # C++ only knows how to leave out SourceHitIndex
+        others = [a for a in self.user_info.skip_attributes if a != "SourceHitIndex"]
+        if others:
+            fatal(
+                f"DigitizerOpticalGenerativeActor '{self.name}': skip_attributes "
+                f"can only hold 'SourceHitIndex', got {others}. The other "
+                f"attributes are set by 'outputs' or the bundle's manifest."
+            )
 
         # needs the coordinates resolved above
         self._resolve_efficiency()
